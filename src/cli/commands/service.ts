@@ -361,10 +361,14 @@ export async function runServiceStop(opts: ServiceProfileOptions = {}): Promise<
 }
 
 /**
- * `bridge restart` — bounce the running daemon in place.
+ * `bridge restart` — reinstall the service definition and bounce the daemon.
  *
  * If the service is not running (stopped or never started), behaves like
  * `start` and goes through the full install + start path.
+ *
+ * Reinstalling before the bounce matters on launchd: changes to PATH,
+ * LARK_CHANNEL_HOME, or captured proxy environment in the plist are only
+ * applied after the job is bootstrapped again.
  */
 export async function runServiceRestart(opts: ServiceProfileOptions = {}): Promise<void> {
   const profile = await resolveServiceProfile(opts.profile);
@@ -373,8 +377,20 @@ export async function runServiceRestart(opts: ServiceProfileOptions = {}): Promi
     console.error('bot 还没在后台运行过。请先运行 `start` 启动。');
     process.exit(1);
   }
+  await adapter.install();
   if (adapter.isRunning()) {
-    await reportConnectAfter('restarted', profile, adapter.restart);
+    const r = await adapter.stop();
+    if (!r.ok) {
+      console.warn(`⚠ 停止旧实例时有警告(继续重启):\n${formatServiceStderr(r.stderr)}`);
+    }
+    const ok = await adapter.waitUntilStopped();
+    if (!ok) {
+      console.error('✗ 旧 bot 实例没有完全停止。请稍后重试,或:');
+      console.error('  unregister  # 强制清除注册');
+      console.error('  start       # 再次启动');
+      process.exit(1);
+    }
+    await reportConnectAfter('restarted', profile, adapter.start);
     return;
   }
   await reportConnectAfter('started', profile, adapter.start);

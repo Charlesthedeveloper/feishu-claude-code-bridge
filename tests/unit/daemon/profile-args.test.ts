@@ -40,4 +40,23 @@ describe('profile-scoped daemon paths and arguments', () => {
     expect(buildLauncherCmd(inputs)).toContain('run --profile "codex-dev"');
     expect(buildLauncherCmd(inputs)).toContain('set "LARK_CHANNEL_HOME=/tmp/lark-channel-home"');
   });
+
+  it('passes captured proxy env through launchd plists', () => {
+    const plist = buildPlist({
+      nodePath: '/usr/local/bin/node',
+      bridgeEntryPath: '/repo/bin/lark-channel-bridge.mjs',
+      envPath: '/usr/local/bin:/usr/bin',
+      profile: 'claude',
+      channelHome: '/tmp/lark-channel-home',
+      env: {
+        https_proxy: 'http://127.0.0.1:1087',
+        no_proxy: 'localhost,127.0.0.1,.feishu.cn',
+        HTTP_PROXY: undefined,
+      },
+    });
+
+    expect(plist).toContain('<key>https_proxy</key>\n        <string>http://127.0.0.1:1087</string>');
+    expect(plist).toContain('<key>no_proxy</key>\n        <string>localhost,127.0.0.1,.feishu.cn</string>');
+    expect(plist).not.toContain('<key>HTTP_PROXY</key>');
+  });
 });

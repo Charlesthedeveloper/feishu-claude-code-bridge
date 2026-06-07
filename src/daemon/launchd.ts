@@ -25,6 +25,8 @@ export interface PlistInputs {
   profile: string;
   /** Root directory for config/profile state. */
   channelHome: string;
+  /** Extra environment variables captured for the daemon process. */
+  env?: Record<string, string | undefined>;
 }
 
 export function buildPlist(inputs: PlistInputs): string {
@@ -34,6 +36,13 @@ export function buildPlist(inputs: PlistInputs): string {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  const envEntries = Object.entries(inputs.env ?? {})
+    .filter((entry): entry is [string, string] => Boolean(entry[0]) && entry[1] !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `        <key>${escape(key)}</key>
+        <string>${escape(value)}</string>`)
+    .join('\n');
+  const extraEnv = envEntries ? `\n${envEntries}` : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -61,11 +70,26 @@ export function buildPlist(inputs: PlistInputs): string {
         <key>PATH</key>
         <string>${escape(inputs.envPath)}</string>
         <key>LARK_CHANNEL_HOME</key>
-        <string>${escape(inputs.channelHome)}</string>
+        <string>${escape(inputs.channelHome)}</string>${extraEnv}
     </dict>
 </dict>
 </plist>
 `;
+}
+
+function captureProxyEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  return Object.fromEntries(
+    [
+      'HTTP_PROXY',
+      'HTTPS_PROXY',
+      'ALL_PROXY',
+      'NO_PROXY',
+      'http_proxy',
+      'https_proxy',
+      'all_proxy',
+      'no_proxy',
+    ].map((key) => [key, env[key]]),
+  );
 }
 
 export async function writePlist(profile: string): Promise<void> {
@@ -79,6 +103,7 @@ export async function writePlist(profile: string): Promise<void> {
     envPath: process.env.PATH ?? '',
     profile,
     channelHome: paths.rootDir,
+    env: captureProxyEnv(process.env),
   });
   const plistPath = launchAgentPlistPath(profile);
   await mkdir(dirname(plistPath), { recursive: true });
