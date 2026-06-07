@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { paths } from '../config/paths';
+import { normalizeAgentEffort, type AgentEffort } from '../config/schema';
 import { log } from '../core/logger';
 import { writeFileAtomic } from '../platform/atomic-write';
 
@@ -14,6 +15,8 @@ export interface SessionEntry {
    * scope, undefined = follow global default. Session resets preserve this
    * scope preference while removing the resumable session id/cwd. */
   idleTimeoutMinutes?: number;
+  /** Per-scope reasoning effort override. Undefined = follow global default. */
+  effort?: AgentEffort;
 }
 
 type SessionMap = Record<string, SessionEntry>;
@@ -43,13 +46,16 @@ export class SessionStore {
         const cwd = typeof entry.cwd === 'string' ? entry.cwd : undefined;
         const idleTimeoutMinutes =
           typeof entry.idleTimeoutMinutes === 'number' ? entry.idleTimeoutMinutes : undefined;
+        const effort =
+          typeof entry.effort === 'string' ? normalizeAgentEffort(entry.effort) : undefined;
         const hasSession = sessionId !== undefined && cwd !== undefined;
-        if (!hasSession && idleTimeoutMinutes === undefined) continue;
+        if (!hasSession && idleTimeoutMinutes === undefined && effort === undefined) continue;
         this.data[chatId] = {
           ...(sessionId !== undefined ? { sessionId } : {}),
           ...(cwd !== undefined ? { cwd } : {}),
           updatedAt: entry.updatedAt,
           ...(idleTimeoutMinutes !== undefined ? { idleTimeoutMinutes } : {}),
+          ...(effort !== undefined ? { effort } : {}),
         };
       }
     } catch (err) {
@@ -75,8 +81,8 @@ export class SessionStore {
   }
 
   set(chatId: string, sessionId: string, cwd: string): void {
-    // Preserve idleTimeoutMinutes across run starts — it's a per-scope
-    // preference, not per-run-instance state. /new (clear) wipes it.
+    // Preserve per-scope preferences across run starts — they are not
+    // per-run-instance state. /new (clear) wipes them.
     const prev = this.data[chatId];
     this.data[chatId] = {
       sessionId,
@@ -85,6 +91,7 @@ export class SessionStore {
       ...(prev?.idleTimeoutMinutes !== undefined
         ? { idleTimeoutMinutes: prev.idleTimeoutMinutes }
         : {}),
+      ...(prev?.effort !== undefined ? { effort: prev.effort } : {}),
     };
     this.schedulePersist();
   }
@@ -101,6 +108,22 @@ export class SessionStore {
       delete this.data[chatId];
     }
     this.schedulePersist();
+  }
+
+  /** Clear only the resumable session identity, preserving per-scope
+   * preferences such as timeout and effort overrides. */
+  clearSession(chatId: string): boolean {
+    const prev = this.data[chatId];
+    if (!prev || (prev.sessionId === undefined && prev.cwd === undefined)) return false;
+
+    const { sessionId: _sessionId, cwd: _cwd, ...rest } = prev;
+    if (rest.idleTimeoutMinutes === undefined && rest.effort === undefined) {
+      delete this.data[chatId];
+    } else {
+      this.data[chatId] = { ...rest, updatedAt: Date.now() };
+    }
+    this.schedulePersist();
+    return true;
   }
 
   /** Per-scope idle-timeout override. `undefined` means no override set. */
@@ -125,6 +148,32 @@ export class SessionStore {
     const prev = this.data[chatId];
     if (!prev || prev.idleTimeoutMinutes === undefined) return false;
     const { idleTimeoutMinutes: _, ...rest } = prev;
+    this.data[chatId] = { ...rest, updatedAt: Date.now() };
+    this.schedulePersist();
+    return true;
+  }
+
+  /** Per-scope effort override. `undefined` means no override set. */
+  getEffort(chatId: string): AgentEffort | undefined {
+    return this.data[chatId]?.effort;
+  }
+
+  setEffort(chatId: string, effort: AgentEffort): void {
+    const prev = this.data[chatId];
+    this.data[chatId] = {
+      ...(prev ?? { updatedAt: Date.now() }),
+      effort,
+      updatedAt: Date.now(),
+    };
+    this.schedulePersist();
+  }
+
+  /** Remove the effort override so this scope falls back to the global default.
+   * Returns true if something was actually removed. */
+  clearEffortOverride(chatId: string): boolean {
+    const prev = this.data[chatId];
+    if (!prev || prev.effort === undefined) return false;
+    const { effort: _, ...rest } = prev;
     this.data[chatId] = { ...rest, updatedAt: Date.now() };
     this.schedulePersist();
     return true;

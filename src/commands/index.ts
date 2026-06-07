@@ -15,14 +15,16 @@ import {
 import { configCancelledCard, configFailedCard, configFormCard, configSavedCard } from '../card/config-card';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
-import type { AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
+import type { AgentEffort, AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
+  getAgentEffort,
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
   getRequireMentionInGroup,
   getRunIdleTimeoutMs,
   getShowToolCalls,
+  normalizeAgentEffort,
   secretKeyForApp,
 } from '../config/schema';
 import type { ProfileAccess, ProfileConfig } from '../config/profile-schema';
@@ -70,6 +72,7 @@ import type { WorkspaceStore } from '../workspace/store';
 import { createBoundChat, defaultChatName } from '../bot/group';
 import { fetchKnownChats, type KnownChat } from '../bot/lark-info';
 import { applyLarkCliIdentityPolicy, hasStructuredLarkCliUserAuth } from '../lark-cli/identity-policy';
+import { recordRunSessionEvent } from '../bot/run-flow';
 
 export interface Controls {
   profile: string;
@@ -159,6 +162,8 @@ const handlers: Record<string, Handler> = {
   '/account': handleAccount,
   '/config': handleConfig,
   '/stop': handleStop,
+  '/effort': handleEffort,
+  '/compact': handleCompact,
   '/timeout': handleTimeout,
   '/ps': handlePs,
   '/exit': handleExit,
@@ -293,13 +298,61 @@ function isAbsoluteOrTilde(p: string): boolean {
   return isAbsolute(p) || p === '~' || p.startsWith('~/');
 }
 
+const EFFORT_USAGE =
+  '用法：`/effort [low|medium|high|xhigh|max|default]` 或 `/new [low|medium|high|xhigh|max]`';
+
+function formatEffort(effort: AgentEffort): string {
+  switch (effort) {
+    case 'low':
+      return '`low`（最快/最低 reasoning）';
+    case 'medium':
+      return '`medium`';
+    case 'high':
+      return '`high`';
+    case 'xhigh':
+      return '`xhigh`（extra high）';
+    case 'max':
+      return '`max`（本机 Claude Code 最高档）';
+  }
+}
+
+function effortAliasNote(raw: string, effort: AgentEffort): string {
+  const normalized = raw.trim().toLowerCase().replace(/[\s_]+/g, '-');
+  return normalized && normalized !== effort ? `（已将 \`${raw.trim()}\` 映射为 \`${effort}\`）` : '';
+}
+
+function parseNewEffortArg(trimmed: string): {
+  effort?: AgentEffort;
+  explicitDefault?: boolean;
+  invalid?: boolean;
+  raw?: string;
+} {
+  if (!trimmed) return {};
+  const lower = trimmed.toLowerCase();
+  const raw =
+    lower === 'effort' || lower.startsWith('effort ')
+      ? trimmed.slice('effort'.length).trim()
+      : trimmed;
+  if (!raw) return { invalid: true, raw };
+  if (raw.toLowerCase() === 'default') return { explicitDefault: true, raw };
+  const effort = normalizeAgentEffort(raw);
+  return effort ? { effort, raw } : { invalid: true, raw };
+}
+
 async function handleNew(args: string, ctx: CommandContext): Promise<void> {
   const trimmed = args.trim();
+  const lower = trimmed.toLowerCase();
 
   // /new chat [name]  — spin up a fresh group chat bound to a fresh session
-  if (trimmed === 'chat' || trimmed.startsWith('chat ')) {
+  if (lower === 'chat' || lower.startsWith('chat ')) {
     const rawName = trimmed === 'chat' ? '' : trimmed.slice(5).trim();
     return handleNewChat(rawName, ctx);
+  }
+
+  const requestedEffort = parseNewEffortArg(trimmed);
+  if (requestedEffort.invalid) {
+    await reply(ctx, `❌ ${EFFORT_USAGE}\n\n示例：\`/new low\`、\`/new effort max\`、\`/new\``);
+    return;
   }
 
   const wasRunning = ctx.activeRuns.interrupt(ctx.scope);
@@ -310,11 +363,27 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     });
   }
   ctx.sessions.clear(ctx.scope);
-  await reply(ctx, wasRunning ? '已中断当前任务并开始新会话。' : '已开始新会话。');
+  if (requestedEffort.effort) {
+    ctx.sessions.setEffort(ctx.scope, requestedEffort.effort);
+    log.info('command', 'new-effort-set', {
+      scope: ctx.scope,
+      effort: requestedEffort.effort,
+    });
+  }
+  const effortLine = requestedEffort.effort
+    ? `\neffort: ${formatEffort(requestedEffort.effort)}${effortAliasNote(requestedEffort.raw ?? '', requestedEffort.effort)}`
+    : requestedEffort.explicitDefault
+      ? `\neffort: 跟随全局（${formatEffort(getAgentEffort(ctx.controls.cfg))}）`
+      : '';
+  await reply(
+    ctx,
+    `${wasRunning ? '已中断当前任务并开始新会话。' : '已开始新会话。'}${effortLine}`,
+  );
 }
 
 async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void> {
   const sourceCwd = effectiveWorkspaceCwd(ctx);
+  const sourceEffort = ctx.sessions.getEffort(ctx.scope);
   const name = rawName || defaultChatName(ctx.agent.displayName);
 
   let created;
@@ -335,13 +404,17 @@ async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void
   if (sourceCwd) {
     ctx.workspaces.setCwd(created.chatId, sourceCwd);
   }
+  if (sourceEffort) {
+    ctx.sessions.setEffort(created.chatId, sourceEffort);
+  }
 
   // Welcome the user inside the new group with a hint about how to start.
+  const effortLine = sourceEffort ? `\neffort 继承为 ${formatEffort(sourceEffort)}` : '';
   const welcome = sourceCwd
     ? `🎉 群已建好，cwd 继承自原群：\`${sourceCwd}\`\n\n@我 + 任意消息开始对话。`
     : '🎉 群已建好。\n\n@我 + 任意消息开始对话。';
   try {
-    await ctx.channel.send(created.chatId, { markdown: welcome });
+    await ctx.channel.send(created.chatId, { markdown: `${welcome}${effortLine}` });
   } catch (err) {
     console.warn('[new-chat] welcome message failed:', err);
   }
@@ -684,6 +757,222 @@ function pruneResumeCandidates(now = Date.now()): void {
   }
 }
 
+async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
+  const raw = args.trim();
+  const trimmed = raw.toLowerCase();
+  const globalEffort = getAgentEffort(ctx.controls.cfg);
+
+  if (!trimmed) {
+    const sessionEffort = ctx.sessions.getEffort(ctx.scope);
+    const usage = [
+      '',
+      '用法：',
+      '- `/effort low` 当前 session 设低 reasoning，适合快速聊天/健身记录',
+      '- `/effort high` 或 `/effort xhigh` 当前 session 提高 reasoning',
+      '- `/effort max` 当前 session 使用本机 Claude Code 最高档',
+      '- `/effort default` 清除 session 覆盖，回退全局',
+      '- `/new low` 新会话并同时设低 effort',
+      '',
+      '_别名：`extra high` → `xhigh`；`ultra` → `max`_',
+    ].join('\n');
+    if (sessionEffort) {
+      await reply(
+        ctx,
+        `🧠 当前 session effort：${formatEffort(sessionEffort)}\n全局默认：${formatEffort(globalEffort)}${usage}`,
+      );
+      return;
+    }
+    await reply(ctx, `🧠 当前 session effort：跟随全局（${formatEffort(globalEffort)}）${usage}`);
+    return;
+  }
+
+  if (trimmed === 'default') {
+    const cleared = ctx.sessions.clearEffortOverride(ctx.scope);
+    log.info('command', 'effort-clear', { scope: ctx.scope, cleared });
+    await reply(
+      ctx,
+      cleared
+        ? `✅ 已清除 session effort 覆盖，回退到全局（${formatEffort(globalEffort)}）。`
+        : `当前 session 本来就没设过 effort 覆盖，跟随全局（${formatEffort(globalEffort)}）。`,
+    );
+    return;
+  }
+
+  const effort = normalizeAgentEffort(raw);
+  if (!effort) {
+    await reply(ctx, `❌ ${EFFORT_USAGE}\n\n别名：\`extra high\` = \`xhigh\`，\`ultra\` = \`max\``);
+    return;
+  }
+
+  ctx.sessions.setEffort(ctx.scope, effort);
+  log.info('command', 'effort-set', { scope: ctx.scope, effort });
+  await reply(
+    ctx,
+    `✅ 当前 session effort 已设为 ${formatEffort(effort)}${effortAliasNote(raw, effort)}。\n下条消息开始生效。`,
+  );
+}
+
+async function handleCompact(args: string, ctx: CommandContext): Promise<void> {
+  if (!ctx.runExecutor) {
+    await reply(ctx, '当前 bridge 没有可用 run executor，无法执行 compact。');
+    return;
+  }
+  const requestedCwd = effectiveWorkspaceCwd(ctx);
+  if (!requestedCwd) {
+    await reply(ctx, '当前 chat 未设置 cwd，先用 `/cd <path>` 或 `/ws use <name>` 选择工作目录。');
+    return;
+  }
+  const workspace = await resolveWorkingDirectory(requestedCwd);
+  if (!workspace.ok) {
+    await reply(ctx, workspace.userVisible);
+    return;
+  }
+
+  const capability =
+    ctx.controls.profileConfig.agentKind === 'codex'
+      ? codexCapability(ctx.controls.profileConfig)
+      : claudeCapability(ctx.controls.profileConfig);
+  const accessDecision =
+    ctx.msg.chatType === 'p2p'
+      ? canUseDm(ctx.controls.profileConfig, ctx.controls, ctx.msg.senderId)
+      : canUseGroup(ctx.controls.profileConfig, ctx.controls, ctx.msg.chatId, ctx.msg.senderId);
+  const prompt = args.trim() ? `/compact ${args.trim()}` : '/compact';
+  const policy = evaluateRunPolicy({
+    scope: {
+      source: 'im',
+      chatId: ctx.msg.chatId,
+      actorId: ctx.msg.senderId,
+      ...(ctx.msg.threadId ? { threadId: ctx.msg.threadId } : {}),
+    },
+    attachments: [],
+    prompt,
+    requestedCwd,
+    cwdRealpath: workspace.cwdRealpath,
+    access: accessDecision,
+    capability,
+    profileConfig: ctx.controls.profileConfig,
+    now: Date.now(),
+    codexHome: ctx.controls.profileConfig.codex?.codexHome,
+    inheritCodexHome: ctx.controls.profileConfig.codex?.inheritCodexHome,
+  });
+  if (!policy.ok) {
+    await reply(ctx, policy.rejectReason.userVisible);
+    return;
+  }
+
+  const catalogIdentity = {
+    scopeId: ctx.scope,
+    agentId: capability.agentId,
+    cwdRealpath: workspace.cwdRealpath,
+    policyFingerprint: policy.policyFingerprint,
+  };
+  const catalogEntry = ctx.sessionCatalog?.activeFor(catalogIdentity);
+  const sessionId =
+    capability.agentId === 'claude'
+      ? catalogEntry?.sessionId ?? ctx.sessions.resumeFor(ctx.scope, workspace.cwdRealpath)
+      : undefined;
+  const threadId = capability.agentId === 'codex' ? catalogEntry?.threadId : undefined;
+  if (capability.agentId === 'claude' && !sessionId) {
+    const rawSession = ctx.sessions.getRaw(ctx.scope);
+    if (rawSession?.sessionId && rawSession.cwd !== workspace.cwdRealpath) {
+      await reply(
+        ctx,
+        `当前 session 绑定在旧 cwd：\`${rawSession.cwd ?? '(unknown)'}\`。\n当前 cwd 是：\`${workspace.cwdRealpath}\`。\n先用 \`/status\` 检查，或 \`/resume\` 选择要恢复的 session。`,
+      );
+      return;
+    }
+    await reply(ctx, '当前 chat 还没有可压缩的 Claude session。先正常发一条消息，或用 `/resume` 恢复历史 session。');
+    return;
+  }
+  if (capability.agentId === 'codex' && !threadId) {
+    await reply(ctx, '当前 chat 还没有可压缩的 Codex thread。先正常发一条消息，或用 `/resume` 恢复历史 thread。');
+    return;
+  }
+
+  const wasRunning = ctx.activeRuns.interrupt(ctx.scope);
+  if (wasRunning) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  let execution: Awaited<ReturnType<RunExecutor['submit']>>;
+  try {
+    execution = await ctx.runExecutor.submit({
+      scopeId: ctx.scope,
+      policy,
+      sessionId,
+      threadId,
+      effort: ctx.sessions.getEffort(ctx.scope) ?? getAgentEffort(ctx.controls.cfg),
+      stopGraceMs: getAgentStopGraceMs(ctx.controls.cfg),
+      observability: {
+        profile: ctx.controls.profile,
+        agent: capability.agentId,
+        source: 'command',
+        stage: 'compact',
+      },
+    });
+  } catch (err) {
+    if (err instanceof RunRejected) {
+      await reply(
+        ctx,
+        err.code === 'run-already-active'
+          ? '当前会话已有运行在执行，请稍后再试或先 `/stop`。'
+          : '当前无法发起 compact，请稍后重试。',
+      );
+      return;
+    }
+    throw err;
+  }
+
+  log.info('command', 'compact-start', {
+    scope: ctx.scope,
+    agent: capability.agentId,
+    hasInstructions: args.trim().length > 0,
+    interrupted: wasRunning,
+    resume: sessionId ?? threadId,
+  });
+
+  try {
+    await ctx.channel.stream(
+      ctx.msg.chatId,
+      {
+        card: {
+          initial: renderCard(initialState),
+          producer: async (ctrl) => {
+            let state: RunState = initialState;
+            const flush = (): Promise<void> => ctrl.update(renderCard(state));
+
+            for await (const evt of execution.subscribe()) {
+              if (execution.handle.interrupted) break;
+              if (evt.type === 'system') {
+                recordRunSessionEvent({
+                  scopeId: ctx.scope,
+                  sessions: ctx.sessions,
+                  sessionCatalog: ctx.sessionCatalog,
+                  capability,
+                  policy,
+                  event: evt,
+                });
+                continue;
+              }
+              if (evt.type === 'usage') continue;
+              state = reduce(state, evt);
+              await flush();
+              if (state.terminal !== 'running') break;
+            }
+
+            state = execution.handle.interrupted ? markInterrupted(state) : finalizeIfRunning(state);
+            await flush();
+          },
+        },
+      },
+      { replyTo: ctx.msg.messageId },
+    );
+  } catch (err) {
+    log.fail('command', err, { step: 'compact' });
+    reportMetric('command_fail', 1, { step: 'compact' });
+  }
+}
+
 async function listClaudeResumeHistory(
   ctx: CommandContext,
   cwd: string,
@@ -783,6 +1072,7 @@ async function larkCliStatus(ctx: CommandContext): Promise<'app' | 'user-ready' 
 async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const cwd = effectiveWorkspaceCwd(ctx);
   const sess = ctx.sessions.getRaw(ctx.scope);
+  const sessionEffort = ctx.sessions.getEffort(ctx.scope);
   const isCodex = ctx.controls.profileConfig.agentKind === 'codex';
   const catalogEntry =
     isCodex && ctx.sessionCatalog && ctx.sessionCatalogIdentity
@@ -803,6 +1093,8 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     ownerState: formatOwnerState(ctx),
     scope: ctx.scope,
     chatMode: ctx.chatMode,
+    effort: sessionEffort ?? getAgentEffort(ctx.controls.cfg),
+    effortSource: sessionEffort ? 'session' : 'global',
   });
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
 }
@@ -1755,6 +2047,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     showToolCalls: getShowToolCalls(ctx.controls.cfg),
     maxConcurrentRuns: getMaxConcurrentRuns(ctx.controls.cfg),
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
+    effort: getAgentEffort(ctx.controls.cfg),
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
     larkCliIdentity: ctx.controls.profileConfig.larkCli.identityPreset,
     allowedUsers: access.allowedUsers,
@@ -1834,6 +2127,9 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   if (rawRequireMention === 'yes') requireMentionInGroup = true;
   else if (rawRequireMention === 'no') requireMentionInGroup = false;
   else requireMentionInGroup = getRequireMentionInGroup(ctx.controls.cfg);
+  const rawEffort = String(fv.effort ?? '').trim();
+  const currentEffort = getAgentEffort(ctx.controls.cfg);
+  const effort = rawEffort ? normalizeAgentEffort(rawEffort) ?? currentEffort : currentEffort;
   const rawLarkCliIdentity = String(fv.lark_cli_identity ?? '').trim();
   const larkCliIdentity =
     rawLarkCliIdentity === 'user-default' || rawLarkCliIdentity === 'bot-only'
@@ -1868,6 +2164,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       showToolCalls,
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
+      effort,
       requireMentionInGroup,
     };
 
@@ -1912,6 +2209,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       showToolCalls,
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
+      effort,
       requireMentionInGroup,
       larkCliIdentity,
       allowedUsersCount: access.allowedUsers.length,
@@ -1927,6 +2225,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         showToolCalls,
         maxConcurrentRuns,
         runIdleTimeoutMinutes,
+        effort,
         requireMentionInGroup,
         larkCliIdentity,
         allowedUsers: access.allowedUsers,

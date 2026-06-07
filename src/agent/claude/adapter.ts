@@ -18,6 +18,11 @@ import { translateEvent } from './stream-json';
 export interface ClaudeAdapterOptions {
   binary?: string;
   larkChannel?: LarkChannelEnvContext;
+  /**
+   * Default `--effort` when an individual run does not pass one.
+   * Usually the bridge supplies this per run from profile/session config.
+   */
+  defaultEffort?: string;
 }
 
 type ClaudeChild = SpawnedProcessByStdio<null, Readable, Readable>;
@@ -28,11 +33,13 @@ export class ClaudeAdapter implements AgentAdapter {
 
   private readonly binary: string;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
+  private readonly defaultEffort: string | undefined;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: ClaudeAdapterOptions = {}) {
     this.binary = opts.binary ?? 'claude';
     this.larkChannel = opts.larkChannel;
+    this.defaultEffort = opts.defaultEffort;
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -57,6 +64,7 @@ export class ClaudeAdapter implements AgentAdapter {
       throw new Error('cwd is required for ClaudeAdapter.run');
     }
 
+    const effort = opts.effort ?? this.defaultEffort;
     const args = [
       '-p',
       opts.prompt,
@@ -70,6 +78,43 @@ export class ClaudeAdapter implements AgentAdapter {
     ];
     if (opts.sessionId) args.push('--resume', opts.sessionId);
     if (opts.model) args.push('--model', opts.model);
+    if (effort) args.push('--effort', effort);
+
+    // Local desktop automation for the user's Feishu bridge. Print mode does
+    // not load Codex/Claude desktop plugins, so declare the GUI MCP server
+    // explicitly and allow only the known GUI tools.
+    args.push(
+      '--mcp-config',
+      '/Users/charlesli/code/feishu-claude-code-bridge/bridge-mcp.json',
+    );
+    for (const tool of [
+      'request_access',
+      'screenshot',
+      'zoom',
+      'left_click',
+      'double_click',
+      'triple_click',
+      'right_click',
+      'middle_click',
+      'type',
+      'key',
+      'scroll',
+      'left_click_drag',
+      'mouse_move',
+      'open_application',
+      'switch_display',
+      'list_granted_applications',
+      'read_clipboard',
+      'write_clipboard',
+      'wait',
+      'cursor_position',
+      'hold_key',
+      'left_mouse_down',
+      'left_mouse_up',
+      'computer_batch',
+    ]) {
+      args.push('--allowed-tools', `mcp__gui__${tool}`);
+    }
 
     const child = spawnProcess(this.binary, args, {
       cwd: opts.cwd,
@@ -83,6 +128,7 @@ export class ClaudeAdapter implements AgentAdapter {
       hasSession: Boolean(opts.sessionId),
       promptChars: opts.prompt.length,
       model: opts.model,
+      effort,
     });
 
     // Listeners MUST be attached synchronously here, before we return.

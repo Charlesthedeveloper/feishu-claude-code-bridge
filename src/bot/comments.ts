@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import type { CommentEvent, LarkChannel } from '@larksuiteoapi/node-sdk';
 import { claudeCapability, codexCapability } from '../agent/capability';
 import type { AgentAdapter, AgentEvent } from '../agent/types';
-import { getAgentStopGraceMs } from '../config/schema';
+import { getAgentEffort, getAgentStopGraceMs } from '../config/schema';
 import type { Controls } from '../commands';
 import { resolveAppPaths } from '../config/app-paths';
 import { log } from '../core/logger';
@@ -269,6 +269,10 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
         policy,
         sessionId,
         threadId,
+        effort:
+          sessions.getEffort(agentSessionScopeId) ??
+          sessions.getEffort(docSessionScopeId) ??
+          getAgentEffort(controls.cfg),
         stopGraceMs: getAgentStopGraceMs(controls.cfg),
         observability: {
           profile: controls.profile,

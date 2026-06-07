@@ -33,6 +33,7 @@ export interface StartRunFlowInput {
   workspaces: WorkspaceStore;
   executor: RunExecutor;
   now: number;
+  effort?: string;
   stopGraceMs?: number;
   observability?: {
     profile: string;
@@ -132,7 +133,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     sessionId = resumeFrom;
     const stale = input.sessions.getRaw(input.scopeId);
     if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
-      input.sessions.clear(input.scopeId);
+      input.sessions.clearSession(input.scopeId);
     }
   }
 
@@ -143,6 +144,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       policy,
       sessionId,
       threadId,
+      effort: input.effort,
       images:
         input.capability.agentId === 'codex'
           ? policy.attachments

@@ -68,6 +68,8 @@ export interface SecretsConfig {
  */
 export type MessageReplyMode = 'card' | 'markdown' | 'text';
 
+export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 /**
  * Access control settings. Empty lists are fail-closed in the v2 policy:
  * no DM senders, no group chats, and only the runtime owner can administer
@@ -137,6 +139,11 @@ export interface AppPreferences {
    * Range 100-30000; out-of-range values fall back to default.
    */
   agentStopGraceMs?: number;
+  /**
+   * Default reasoning effort for Claude Code runs. Per-scope `/effort`
+   * overrides this. Unknown values fall back to `xhigh`.
+   */
+  effort?: string;
 }
 
 /**
@@ -244,6 +251,41 @@ export function getAgentStopGraceMs(cfg: AppConfig): number {
   const raw = cfg.preferences?.agentStopGraceMs;
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return 5000;
   return Math.min(30_000, Math.max(100, Math.floor(raw)));
+}
+
+const VALID_EFFORT_LEVELS: ReadonlySet<AgentEffort> = new Set([
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]);
+
+const EFFORT_ALIASES: Record<string, AgentEffort> = {
+  xh: 'xhigh',
+  'x-high': 'xhigh',
+  xhigh: 'xhigh',
+  extra: 'xhigh',
+  extrahigh: 'xhigh',
+  'extra-high': 'xhigh',
+  ultrahigh: 'max',
+  'ultra-high': 'max',
+  ultra: 'max',
+};
+
+export function normalizeAgentEffort(raw: string): AgentEffort | undefined {
+  const normalized = raw.trim().toLowerCase().replace(/[\s_]+/g, '-');
+  if (!normalized) return undefined;
+  if (VALID_EFFORT_LEVELS.has(normalized as AgentEffort)) {
+    return normalized as AgentEffort;
+  }
+  return EFFORT_ALIASES[normalized] ?? EFFORT_ALIASES[normalized.replace(/-/g, '')];
+}
+
+export function getAgentEffort(cfg: AppConfig): AgentEffort {
+  const raw = cfg.preferences?.effort;
+  if (typeof raw === 'string') return normalizeAgentEffort(raw) ?? 'xhigh';
+  return 'xhigh';
 }
 
 export function getRunIdleTimeoutMs(cfg: AppConfig): number | undefined {

@@ -15,6 +15,7 @@ For a product walkthrough, see the [Feishu document](https://larkcommunity.feish
 - **Multiple workspaces**: use `/cd` to switch the current project, and `/ws` to save and reuse common project directories.
 - **Images and files**: send them to the bot directly, and the bridge downloads them locally for the agent.
 - **Interactive cards**: `/help`, `/ws list`, and `/status` return cards with clickable buttons.
+- **Local customizations in this branch**: Claude reasoning effort controls, `/compact`, GUI MCP tools for desktop automation, and PAC-friendly Feishu/Lark direct-connect handling.
 
 ## Prerequisites
 
@@ -136,7 +137,8 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 
 | Command | Effect |
 |---|---|
-| `/new`, `/reset` | Clear the current session |
+| `/new [effort]`, `/reset [effort]` | Clear the current session; `/new low` starts fresh with low reasoning |
+| `/compact [instructions]` | Ask the current agent to compact the current session/thread without starting a new chat |
 | `/cd <path>` | Switch working directory and reset the session |
 | `/ws list` | List named workspaces |
 | `/ws save <name>` | Save the current working directory as a named workspace |
@@ -145,6 +147,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/resume` | Resume compatible history for the same agent, working directory, and permission mode |
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
+| `/effort [low\|medium\|high\|xhigh\|max\|default]` | Set or clear the current session's Claude reasoning effort override |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
 | `/invite group` | Allow the current group to use the bot |
@@ -159,6 +162,18 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/help` | Help card |
 
 DMs do not require an @ mention. Groups and topic groups require `@bot` by default; `@all` is ignored. Cloud-doc comments in supported document types run when the bot is mentioned.
+
+### Local Claude controls
+
+This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local controls that are useful for a personal Feishu bridge:
+
+- `/effort low|medium|high|xhigh|max`: changes the current chat/topic's Claude Code `--effort` for future runs. `/effort default` removes the override and falls back to `/config`.
+- `/new low`: clears the current session and immediately pins the new session to low effort. This does **not** create a new Feishu group; `/new chat [name]` is still the group-creation command.
+- `/compact [instructions]`: sends `/compact` into the current resumable session/thread. Use this before a long-running chat gets slow or unstable, especially when you want to keep the topic but reduce context size.
+- GUI MCP: Claude runs include `bridge-mcp.json` and the `mcp__gui__*` allowlist so the agent can control local desktop GUI when macOS screen/session state allows it.
+- PAC/NO_PROXY: Feishu/Lark API traffic respects `NO_PROXY`, so `open.feishu.cn` / `open.larksuite.com` can go direct while Claude/Codex traffic uses your proxy.
+
+For quick personal chats like fitness logs or naming brainstorms, use `low` or `medium`. Reserve `high`, `xhigh`, or `max` for code, debugging, and serious research where extra reasoning is worth the latency and upstream flakiness risk.
 
 ## lark-cli identity policy
 
@@ -294,7 +309,7 @@ Cloud-doc comments do not need a separate workspace binding or document allowlis
 
 ## FAQ
 
-**The bot stays silent or the local CLI never replies.** Usually the local `claude` or `codex` CLI is not logged in, or the current session points to a working directory that no longer exists. Send `/status` to inspect; `/new` often fixes it by starting a fresh session.
+**The bot stays silent or the local CLI never replies.** Usually the local `claude` or `codex` CLI is not logged in, the current session points to a working directory that no longer exists, or the resumed session has grown unstable. Send `/status` to inspect; try `/compact` first if you want to keep context, and `/new` when you want a clean session.
 
 **The agent subprocess looks frozen (card stuck on the last frame).** The bridge supports an idle watchdog: if the agent emits nothing for N minutes, the process is killed and the card is annotated with the auto-termination reason. Disabled by default. Enable with `/config` globally, or `/timeout 10` for the current session; `/timeout off` disables it for the session; `/timeout default` clears the session override.
 
@@ -311,6 +326,13 @@ pnpm build
 ```
 
 `pnpm test` includes unit, integration, and process-level adapter tests. CI runs on macOS, Ubuntu, and Windows with `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm typecheck`, and `pnpm build`.
+
+This local branch also keeps targeted coverage for the customizations:
+
+- `tests/integration/commands/local-customizations.test.ts`
+- `tests/unit/session/session-store-effort.test.ts`
+- `tests/unit/bot/network-config.test.ts`
+- `tests/process/claude-adapter.test.ts`
 
 ## Optional telemetry
 

@@ -1,6 +1,6 @@
 import type { KnownChat } from '../bot/lark-info';
 import type { LarkCliIdentityPreset } from '../config/profile-schema';
-import type { MessageReplyMode } from '../config/schema';
+import type { AgentEffort, MessageReplyMode } from '../config/schema';
 
 export interface ConfigFormOpts {
   messageReply: MessageReplyMode;
@@ -8,6 +8,7 @@ export interface ConfigFormOpts {
   maxConcurrentRuns: number;
   /** 0 means "disabled". */
   runIdleTimeoutMinutes: number;
+  effort: AgentEffort;
   requireMentionInGroup: boolean;
   larkCliIdentity: LarkCliIdentityPreset;
   allowedUsers: string[];
@@ -169,6 +170,24 @@ export function configFormCard(opts: ConfigFormOpts): object {
             {
               tag: 'markdown',
               content:
+                '\n**默认 reasoning effort**\n' +
+                '_控制新 run 的 Claude Code thinking 预算；健身/闲聊可用 low，复杂代码/研究用 high/max_',
+            },
+            {
+              tag: 'select_static',
+              name: 'effort',
+              initial_option: opts.effort,
+              options: [
+                { text: { tag: 'plain_text', content: 'low' }, value: 'low' },
+                { text: { tag: 'plain_text', content: 'medium' }, value: 'medium' },
+                { text: { tag: 'plain_text', content: 'high' }, value: 'high' },
+                { text: { tag: 'plain_text', content: 'xhigh' }, value: 'xhigh' },
+                { text: { tag: 'plain_text', content: 'max' }, value: 'max' },
+              ],
+            },
+            {
+              tag: 'markdown',
+              content:
                 '\n**群里需要 @ bot**\n' +
                 '_是(默认):群和话题群里,不 @ bot 的消息不会触发回复,bot 不接群里聊天_\n' +
                 '_否:任何消息都会发给 agent(0.1.21 及更早版本的行为)_\n' +
@@ -263,6 +282,7 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
+            `**默认 effort**:\`${opts.effort}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             `**lark-cli 身份策略**:\`${opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +
             '🔒 **访问控制**\n' +

@@ -15,6 +15,7 @@
 - **多工作空间**：用 `/cd` 切换当前项目，用 `/ws` 保存和复用常用项目目录。
 - **图片 / 文件**：直接发给 bot，bridge 下载到本地后交给本机 agent 处理。
 - **卡片按钮**：`/help`、`/ws list`、`/status` 返回可点击的交互卡片。
+- **本地定制功能**：Claude reasoning effort 控制、`/compact`、GUI MCP 桌面自动化工具，以及适配 PAC 的 Feishu/Lark 直连逻辑。
 
 ## 前置条件
 
@@ -136,7 +137,8 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 
 | 命令 | 作用 |
 |---|---|
-| `/new`, `/reset` | 清空当前会话 |
+| `/new [effort]`, `/reset [effort]` | 清空当前会话；例如 `/new low` 会新会话同时设低 reasoning |
+| `/compact [说明]` | 压缩当前 session/thread 的上下文，不新建群聊 |
 | `/cd <path>` | 切换工作目录并重置会话 |
 | `/ws list` | 列出命名工作空间 |
 | `/ws save <name>` | 把当前工作目录保存为命名工作空间 |
@@ -145,6 +147,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/resume` | 恢复同 agent、工作目录、权限模式兼容的历史会话 |
 | `/status` | 查看 profile、agent、工作目录、会话、lark-cli 身份和运行状态 |
 | `/config` | 调整展示偏好、访问控制和 lark-cli 身份策略 |
+| `/effort [low\|medium\|high\|xhigh\|max\|default]` | 设置或清除当前会话的 Claude reasoning effort 覆盖 |
 | `/invite user @某人` | 允许用户私聊使用 bot |
 | `/invite admin @某人` | 添加访问控制管理员 |
 | `/invite group` | 允许当前群使用 bot |
@@ -159,6 +162,18 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/help` | 帮助卡片 |
 
 私聊不需要 @。群和话题群默认必须 `@bot`；`@all` 会被忽略。支持的云文档评论里 @bot 就会触发回复。
+
+### 本地 Claude 控制
+
+这个分支保留 upstream 0.2.2 的 profile/Codex 架构，同时加回几个适合个人飞书 bridge 的本地定制：
+
+- `/effort low|medium|high|xhigh|max`：修改当前 chat/topic 后续 Claude Code run 的 `--effort`。`/effort default` 清除当前会话覆盖，回到 `/config` 里的全局默认。
+- `/new low`：在当前 chat/topic 清空 session，并让新 session 从 low effort 开始。它**不会**新建飞书群；新建群仍然是 `/new chat [name]`。
+- `/compact [说明]`：向当前可恢复 session/thread 发送 `/compact`。长会话变慢、上下文太大但又不想丢主题时先用它。
+- GUI MCP：Claude run 会加载 `bridge-mcp.json` 并允许 `mcp__gui__*` 工具，所以在 macOS 屏幕/会话状态允许时，agent 可以做本地桌面 GUI 操作。
+- PAC/NO_PROXY：Feishu/Lark API 请求会尊重 `NO_PROXY`，因此 `open.feishu.cn` / `open.larksuite.com` 可以直连，而 Claude/Codex 流量继续走代理。
+
+健身记录、日常闲聊、起名发散这类轻任务，建议用 `low` 或 `medium`。代码、debug、严肃研究再用 `high`、`xhigh` 或 `max`，否则更慢，也更容易遇到上游抖动。
 
 ## lark-cli 身份策略
 
@@ -294,7 +309,7 @@ grep '"event":"enter"' ~/.lark-channel/profiles/<profile>/logs/bridge-$(date +%Y
 
 ## 常见问题
 
-**bot 没反应 / agent 不回复**：通常是本机 `claude` 或 `codex` CLI 没登录，或者当前会话指向了不存在的工作目录。发 `/status` 看当前状态；`/new` 重开会话往往就好。
+**bot 没反应 / agent 不回复**：通常是本机 `claude` 或 `codex` CLI 没登录、当前会话指向了不存在的工作目录，或者复用的旧 session 状态不佳。发 `/status` 看当前状态；想保留上下文先试 `/compact`，想彻底重来再用 `/new`。
 
 **agent 子进程假死（卡片停在最后一帧不动）**：支持 idle 探活。agent 一段时间没输出就会被 SIGTERM kill，卡片末尾会标出自动终止原因。默认关闭。开启方式：`/config` 设全局值（分钟），或 `/timeout 10` 只对当前会话生效；`/timeout off` 关掉当前会话的探活；`/timeout default` 清掉会话覆盖，回退到全局设置。
 
@@ -311,6 +326,13 @@ pnpm build
 ```
 
 `pnpm test` 包含 unit、integration 和 process-level adapter 测试。CI 在 macOS、Ubuntu、Windows 上执行 `pnpm install --frozen-lockfile`、`pnpm test`、`pnpm typecheck` 和 `pnpm build`。
+
+本地定制功能有专门测试覆盖：
+
+- `tests/integration/commands/local-customizations.test.ts`
+- `tests/unit/session/session-store-effort.test.ts`
+- `tests/unit/bot/network-config.test.ts`
+- `tests/process/claude-adapter.test.ts`
 
 ## 可选：遥测（Telemetry）
 

@@ -29,6 +29,7 @@ import { renderText } from '../card/text-renderer';
 import { tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
+  getAgentEffort,
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
@@ -183,7 +184,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   // Apply network-layer overrides (HTTP timeout + proxy from env). Idempotent;
   // safe to call on every startChannel (used by /account change hot-reload too).
-  const netOverrides = configureNetwork();
+  const apiDomain =
+    cfg.accounts.app.tenant === 'lark'
+      ? 'https://open.larksuite.com'
+      : 'https://open.feishu.cn';
+  const netOverrides = configureNetwork({ apiHost: apiDomain });
 
   // Resolve the App Secret to plaintext. The config field can be a literal
   // string, a "${VAR}" template, or a {source, id} SecretRef referencing
@@ -403,13 +408,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // App-level keepalive: 15s probe + wake-up detection + HTTP reachability.
   // Defense-in-depth — the SDK's pingTimeout watchdog handles half-dead WS,
   // this catches anything that the SDK misses (silent state stuck, etc.).
-  const probeDomain =
-    cfg.accounts.app.tenant === 'lark'
-      ? 'https://open.larksuite.com'
-      : 'https://open.feishu.cn';
   const keepalive = startKeepalive({
     channel,
-    domain: probeDomain,
+    domain: apiDomain,
     forceReconnect: () => controls.restart(),
   });
 
@@ -716,6 +717,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     workspaces,
     executor,
     now: Date.now(),
+    effort: sessions.getEffort(scope) ?? getAgentEffort(controls.cfg),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
     observability: {
       profile: controls.profile,
@@ -816,6 +818,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         handle,
         eventStream,
         scope,
+        sessions,
         idleTimeoutMs,
         recordSession,
         async (state) => {
@@ -861,6 +864,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         handle,
         eventStream,
         scope,
+        sessions,
         idleTimeoutMs,
         recordSession,
         async (state) => {
@@ -902,6 +906,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         handle,
         eventStream,
         scope,
+        sessions,
         idleTimeoutMs,
         recordSession,
         async () => {},
@@ -928,6 +933,7 @@ async function processAgentStream(
   handle: RunHandle,
   events: AsyncIterable<AgentEvent>,
   scope: string,
+  sessions: SessionStore,
   idleTimeoutMs: number | undefined,
   recordSession: (event: AgentEvent) => void,
   flush: (state: RunState) => Promise<void>,
@@ -1035,6 +1041,13 @@ async function processAgentStream(
       state = finalizeIfRunning(state);
     }
   }
+  if (state.terminal === 'idle_timeout' && !hasVisibleOutput(state)) {
+    const cleared = sessions.clearSession(scope);
+    if (cleared) {
+      log.warn('session', 'cleared-after-idle-timeout', { scope });
+      await sessions.flush();
+    }
+  }
   log.info('card', 'final', { terminal: state.terminal, interrupted: handle.interrupted });
   reportMetric('run_e2e_ms', Date.now() - runStart, { terminal: state.terminal });
   await flush(state);
@@ -1042,6 +1055,13 @@ async function processAgentStream(
     await handle.run.stop();
   }
   return state;
+}
+
+function hasVisibleOutput(state: RunState): boolean {
+  return state.blocks.some((block) => {
+    if (block.kind === 'text') return block.content.trim().length > 0;
+    return true;
+  });
 }
 
 async function awaitRenderAwareStream(input: {
