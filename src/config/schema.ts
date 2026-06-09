@@ -144,6 +144,11 @@ export interface AppPreferences {
    * overrides this. Unknown values fall back to `xhigh`.
    */
   effort?: string;
+  /**
+   * Optional Claude Code model id passed as `--model`. Undefined means let
+   * Claude Code use its own default.
+   */
+  model?: string;
 }
 
 /**
@@ -286,6 +291,31 @@ export function getAgentEffort(cfg: AppConfig): AgentEffort {
   const raw = cfg.preferences?.effort;
   if (typeof raw === 'string') return normalizeAgentEffort(raw) ?? 'xhigh';
   return 'xhigh';
+}
+
+const MODEL_ALIASES: Record<string, string> = {
+  fable: 'claude-fable-5',
+  fable5: 'claude-fable-5',
+  'fable-5': 'claude-fable-5',
+  'claude-fable': 'claude-fable-5',
+  opus: 'claude-opus-4-8',
+  opus48: 'claude-opus-4-8',
+  'opus-4-8': 'claude-opus-4-8',
+  'opus-4.8': 'claude-opus-4-8',
+  'claude-opus': 'claude-opus-4-8',
+};
+
+export function normalizeAgentModel(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const normalized = trimmed.toLowerCase().replace(/[\s_]+/g, '-');
+  return MODEL_ALIASES[normalized] ?? MODEL_ALIASES[normalized.replace(/[-.]/g, '')] ?? trimmed;
+}
+
+export function getAgentModel(cfg: AppConfig): string | undefined {
+  const raw = cfg.preferences?.model;
+  if (typeof raw !== 'string') return undefined;
+  return normalizeAgentModel(raw);
 }
 
 export function getRunIdleTimeoutMs(cfg: AppConfig): number | undefined {

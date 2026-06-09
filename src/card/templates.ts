@@ -70,6 +70,7 @@ export interface StatusInfo {
   emptySessionText?: string;
   sessionStale: boolean;
   agentName: string;
+  model?: string;
   runtimeAccess: {
     label: string;
     value: string;
@@ -108,6 +109,7 @@ export function statusCard(info: StatusInfo): object {
     `🧩 **profile**: ${escapeMd(info.profileName)}`,
     `📁 **cwd**: ${cwdLine}`,
     `🔗 **session**: ${sessionLine}`,
+    `🧬 **model**: \`${escapeCode(info.model ?? 'Claude Code default')}\``,
     `🧠 **effort**: \`${info.effort}\` ${effortSource}`,
     `🤖 **agent**: ${escapeMd(info.agentName)}`,
     `🛡 **${escapeMd(info.runtimeAccess.label)}**: ${escapeMd(info.runtimeAccess.value)}`,
@@ -197,6 +199,7 @@ export function helpCard(agentName = 'Agent'): object {
         '- `/status` — 当前状态',
         '- `/stop` — 结束当前正在跑的任务（也可点卡片底部 ⏹ 终止 按钮）',
         '- `/effort [low|medium|high|xhigh|max|default]` — 当前 session 的 reasoning effort',
+        '- `/model [fable|opus|default|<model-id>]` — 当前 Claude profile 的默认模型',
         '- `/stop comment:<scopeHash>` — 管理员停止云文档评论任务',
         '- `/timeout [N|off|default]` — 当前 session 的探活分钟数,`/config` 改全局默认',
         '- `/timeout comment:<scopeHash> N` — 管理员设置云文档评论任务探活',

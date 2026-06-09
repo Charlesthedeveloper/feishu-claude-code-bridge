@@ -30,6 +30,7 @@ import { tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
   getAgentEffort,
+  getAgentModel,
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
@@ -717,6 +718,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     workspaces,
     executor,
     now: Date.now(),
+    model: getAgentModel(controls.cfg),
     effort: sessions.getEffort(scope) ?? getAgentEffort(controls.cfg),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
     observability: {

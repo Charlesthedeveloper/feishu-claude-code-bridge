@@ -6,6 +6,7 @@ export interface ConfigFormOpts {
   messageReply: MessageReplyMode;
   showToolCalls: boolean;
   maxConcurrentRuns: number;
+  model?: string;
   /** 0 means "disabled". */
   runIdleTimeoutMinutes: number;
   effort: AgentEffort;
@@ -170,6 +171,19 @@ export function configFormCard(opts: ConfigFormOpts): object {
             {
               tag: 'markdown',
               content:
+                '\n**默认 Claude model**\n' +
+                '_例如 `claude-fable-5`、`claude-opus-4-8`。留空 = Claude Code 默认模型_',
+            },
+            {
+              tag: 'input',
+              name: 'model',
+              default_value: opts.model ?? '',
+              placeholder: { tag: 'plain_text', content: 'claude-fable-5' },
+              input_type: 'text',
+            },
+            {
+              tag: 'markdown',
+              content:
                 '\n**默认 reasoning effort**\n' +
                 '_控制新 run 的 Claude Code thinking 预算；健身/闲聊可用 low，复杂代码/研究用 high/max_',
             },
@@ -282,6 +296,7 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
+            `**默认 model**:\`${opts.model || 'Claude Code default'}\`\n` +
             `**默认 effort**:\`${opts.effort}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             `**lark-cli 身份策略**:\`${opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +

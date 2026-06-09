@@ -18,6 +18,7 @@ import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templa
 import type { AgentEffort, AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
   getAgentEffort,
+  getAgentModel,
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
@@ -25,6 +26,7 @@ import {
   getRunIdleTimeoutMs,
   getShowToolCalls,
   normalizeAgentEffort,
+  normalizeAgentModel,
   secretKeyForApp,
 } from '../config/schema';
 import type { ProfileAccess, ProfileConfig } from '../config/profile-schema';
@@ -163,6 +165,7 @@ const handlers: Record<string, Handler> = {
   '/config': handleConfig,
   '/stop': handleStop,
   '/effort': handleEffort,
+  '/model': handleModel,
   '/compact': handleCompact,
   '/timeout': handleTimeout,
   '/ps': handlePs,
@@ -300,6 +303,8 @@ function isAbsoluteOrTilde(p: string): boolean {
 
 const EFFORT_USAGE =
   '用法：`/effort [low|medium|high|xhigh|max|default]` 或 `/new [low|medium|high|xhigh|max]`';
+const MODEL_USAGE =
+  '用法：`/model [fable|opus|default|<claude-model-id>]`，例如 `/model fable` 或 `/model claude-fable-5`';
 
 function formatEffort(effort: AgentEffort): string {
   switch (effort) {
@@ -319,6 +324,11 @@ function formatEffort(effort: AgentEffort): string {
 function effortAliasNote(raw: string, effort: AgentEffort): string {
   const normalized = raw.trim().toLowerCase().replace(/[\s_]+/g, '-');
   return normalized && normalized !== effort ? `（已将 \`${raw.trim()}\` 映射为 \`${effort}\`）` : '';
+}
+
+function modelAliasNote(raw: string, model: string): string {
+  const normalized = raw.trim();
+  return normalized && normalized !== model ? `（已将 \`${normalized}\` 映射为 \`${model}\`）` : '';
 }
 
 function parseNewEffortArg(trimmed: string): {
@@ -901,6 +911,7 @@ async function handleCompact(args: string, ctx: CommandContext): Promise<void> {
       policy,
       sessionId,
       threadId,
+      model: getAgentModel(ctx.controls.cfg),
       effort: ctx.sessions.getEffort(ctx.scope) ?? getAgentEffort(ctx.controls.cfg),
       stopGraceMs: getAgentStopGraceMs(ctx.controls.cfg),
       observability: {
@@ -1085,6 +1096,7 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     emptySessionText: isCodex ? '(未建立)' : undefined,
     sessionStale: !isCodex && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
+    model: getAgentModel(ctx.controls.cfg),
     runtimeAccess: runtimeAccessStatus(ctx.controls.profileConfig),
     larkCliStatus: await larkCliStatus(ctx),
     activeRun: Boolean(ctx.activeRuns.get(ctx.scope)),
@@ -1097,6 +1109,48 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     effortSource: sessionEffort ? 'session' : 'global',
   });
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+}
+
+async function handleModel(args: string, ctx: CommandContext): Promise<void> {
+  if (ctx.controls.profileConfig.agentKind !== 'claude') {
+    await reply(ctx, '当前 profile 是 Codex。`/model` 只控制 Claude Code profile。');
+    return;
+  }
+  const raw = args.trim();
+  const current = getAgentModel(ctx.controls.cfg);
+  if (!raw) {
+    await reply(
+      ctx,
+      `🧬 当前默认 Claude model：\`${current ?? 'Claude Code default'}\`\n\n${MODEL_USAGE}`,
+    );
+    return;
+  }
+
+  const lower = raw.toLowerCase();
+  const nextModel = lower === 'default' || lower === 'clear' ? '' : normalizeAgentModel(raw);
+  if (nextModel === undefined) {
+    await reply(ctx, `❌ ${MODEL_USAGE}`);
+    return;
+  }
+
+  await savePreferencesConfig(
+    ctx,
+    {
+      ...(ctx.controls.cfg.preferences ?? {}),
+      model: nextModel,
+    },
+    getRequireMentionInGroup(ctx.controls.cfg),
+    ctx.controls.profileConfig.larkCli.identityPreset,
+  );
+
+  if (!nextModel) {
+    await reply(ctx, '✅ 已清除默认 Claude model 覆盖，后续消息使用 Claude Code 默认模型。');
+    return;
+  }
+  await reply(
+    ctx,
+    `✅ 默认 Claude model 已设为 \`${nextModel}\`${modelAliasNote(raw, nextModel)}。\n下条消息开始生效。`,
+  );
 }
 
 function formatOwnerState(ctx: CommandContext): string {
@@ -2046,6 +2100,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     messageReply: getMessageReplyMode(ctx.controls.cfg),
     showToolCalls: getShowToolCalls(ctx.controls.cfg),
     maxConcurrentRuns: getMaxConcurrentRuns(ctx.controls.cfg),
+    model: getAgentModel(ctx.controls.cfg),
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
     effort: getAgentEffort(ctx.controls.cfg),
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
@@ -2121,6 +2176,8 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       runIdleTimeoutMinutes = Math.min(120, Math.max(1, Math.floor(parsedIdle)));
     }
   }
+  const rawModel = String(fv.model ?? '').trim();
+  const model = rawModel ? normalizeAgentModel(rawModel) : '';
   // Parse require_mention_in_group. Empty / unexpected keeps current.
   const rawRequireMention = String(fv.require_mention_in_group ?? '').trim();
   let requireMentionInGroup: boolean;
@@ -2163,6 +2220,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       messageReplyMigrated: true,
       showToolCalls,
       maxConcurrentRuns,
+      model,
       runIdleTimeoutMinutes,
       effort,
       requireMentionInGroup,
@@ -2208,6 +2266,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       messageReply,
       showToolCalls,
       maxConcurrentRuns,
+      model,
       runIdleTimeoutMinutes,
       effort,
       requireMentionInGroup,
@@ -2224,6 +2283,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         messageReply,
         showToolCalls,
         maxConcurrentRuns,
+        model,
         runIdleTimeoutMinutes,
         effort,
         requireMentionInGroup,

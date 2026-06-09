@@ -49,11 +49,34 @@ describe('local bridge customizations', () => {
     expect(h.sessions.getEffort('chat-1')).toBeUndefined();
   });
 
+  it('sets the Claude profile model through /model aliases', async () => {
+    const h = await createHarness();
+
+    await expect(h.run('/model')).resolves.toBe(true);
+    expect(lastMarkdown(h.channel)).toContain('Claude Code default');
+
+    await expect(h.run('/model fable')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('claude-fable-5');
+    expect(lastMarkdown(h.channel)).toContain('claude-fable-5');
+
+    await expect(h.run('/model opus')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('claude-opus-4-8');
+
+    await expect(h.run('/model default')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('');
+    expect(lastMarkdown(h.channel)).toContain('已清除默认 Claude model');
+  });
+
   it('runs /compact against the current session without creating a fresh one', async () => {
     const h = await createHarness();
     const cwd = await realpath(h.tmp.workspace);
     h.sessions.set('chat-1', 'session-existing', cwd);
     h.sessions.setEffort('chat-1', 'medium');
+    h.controls.cfg.preferences = {
+      ...(h.controls.cfg.preferences ?? {}),
+      model: 'claude-fable-5',
+    };
     h.agent.setEvents([
       { type: 'system', sessionId: 'session-existing', cwd },
       { type: 'text', delta: 'compacted' },
@@ -67,6 +90,7 @@ describe('local bridge customizations', () => {
       prompt: '/compact keep naming preferences',
       cwd,
       sessionId: 'session-existing',
+      model: 'claude-fable-5',
       effort: 'medium',
     });
     expect(h.sessions.resumeFor('chat-1', cwd)).toBe('session-existing');

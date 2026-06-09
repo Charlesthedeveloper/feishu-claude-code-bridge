@@ -148,6 +148,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/effort [low\|medium\|high\|xhigh\|max\|default]` | Set or clear the current session's Claude reasoning effort override |
+| `/model [fable\|opus\|default\|<model-id>]` | Set or clear the Claude profile's default model, for example `claude-fable-5` |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
 | `/invite group` | Allow the current group to use the bot |
@@ -168,6 +169,7 @@ DMs do not require an @ mention. Groups and topic groups require `@bot` by defau
 This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local controls that are useful for a personal Feishu bridge:
 
 - `/effort low|medium|high|xhigh|max`: changes the current chat/topic's Claude Code `--effort` for future runs. `/effort default` removes the override and falls back to `/config`.
+- `/model fable|opus|default|<model-id>`: changes the current Claude profile's default Claude Code `--model` for future runs. `fable` maps to `claude-fable-5`, `opus` maps to `claude-opus-4-8`, and `default` removes the bridge override.
 - `/new low`: clears the current session and immediately pins the new session to low effort. This does **not** create a new Feishu group; `/new chat [name]` is still the group-creation command.
 - `/compact [instructions]`: sends `/compact` into the current resumable session/thread. Use this before a long-running chat gets slow or unstable, especially when you want to keep the topic but reduce context size.
 - GUI MCP: Claude runs include `bridge-mcp.json` and the `mcp__gui__*` allowlist so the agent can control local desktop GUI when macOS screen/session state allows it.

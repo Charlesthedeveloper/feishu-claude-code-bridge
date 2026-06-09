@@ -33,6 +33,7 @@ export interface StartRunFlowInput {
   workspaces: WorkspaceStore;
   executor: RunExecutor;
   now: number;
+  model?: string;
   effort?: string;
   stopGraceMs?: number;
   observability?: {
@@ -144,6 +145,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       policy,
       sessionId,
       threadId,
+      model: input.model,
       effort: input.effort,
       images:
         input.capability.agentId === 'codex'
