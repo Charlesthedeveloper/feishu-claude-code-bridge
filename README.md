@@ -144,7 +144,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/ws save <name>` | Save the current working directory as a named workspace |
 | `/ws use <name>` | Switch to a named workspace |
 | `/ws remove <name>` | Delete a named workspace |
-| `/resume` | Resume compatible history for the same agent, working directory, and permission mode |
+| `/resume`, `/resume use <session-id>` | Resume compatible history for the same agent, working directory, and permission mode; Claude session ids from `claude --resume ...` can be bound directly when they exist under the current cwd |
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/effort [low\|medium\|high\|xhigh\|max\|default]` | Set or clear the current session's Claude reasoning effort override |

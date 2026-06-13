@@ -80,6 +80,20 @@ describe('agent-aware resume commands', () => {
     expect(lastMarkdown(h.channel)).toContain('已完成');
   });
 
+  it('binds a direct Claude session id when it exists in current cwd history', async () => {
+    const h = await createHarness('claude');
+    h.catalog.upsertActive({ ...h.identity, sessionId: 'sess-current', now: 1000 });
+    h.claudeHistory.push(claudeSession('sess-target', 'target prompt', 1_700_000_000_000));
+
+    await expect(h.run('/resume use sess-target', { chatMode: 'group' })).resolves.toBe(true);
+
+    expect(h.sessions.resumeFor('chat-1', h.identity.cwdRealpath)).toBe('sess-target');
+    expect(h.catalog.activeFor(h.identity)).toMatchObject({
+      sessionId: 'sess-target',
+    });
+    expect(lastMarkdown(h.channel)).toContain('已完成');
+  });
+
   it('resumes the selected Claude history entry from the card button callback', async () => {
     const h = await createHarness('claude');
     h.sessions.set('chat-1', 'sess-current', h.identity.cwdRealpath);

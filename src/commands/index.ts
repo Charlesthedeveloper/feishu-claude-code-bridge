@@ -696,6 +696,19 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     }
     const expected = entry?.sessionId;
     if (expected !== sessionId) {
+      if (await hasClaudeResumeSession(ctx, ctx.sessionCatalogIdentity.cwdRealpath, sessionId)) {
+        ctx.activeRuns.interrupt(ctx.scope);
+        ctx.sessionCatalog.upsertActive({
+          scopeId: ctx.sessionCatalogIdentity.scopeId,
+          agentId: 'claude',
+          cwdRealpath: ctx.sessionCatalogIdentity.cwdRealpath,
+          policyFingerprint: ctx.sessionCatalogIdentity.policyFingerprint,
+          sessionId,
+        });
+        ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
+        await reply(ctx, RESUME_APPLIED_REPLY);
+        return;
+      }
       await reply(ctx, '当前上下文不可恢复这个会话，请重新选择当前工作区和权限策略下的会话。');
       return;
     }
@@ -991,6 +1004,15 @@ async function listClaudeResumeHistory(
 ): Promise<SessionSummary[]> {
   const provider = ctx.claudeHistoryProvider ?? listRecentSessions;
   return provider(cwd, limit);
+}
+
+async function hasClaudeResumeSession(
+  ctx: CommandContext,
+  cwd: string,
+  sessionId: string,
+): Promise<boolean> {
+  const sessions = await listClaudeResumeHistory(ctx, cwd, 200);
+  return sessions.some((session) => session.sessionId === sessionId);
 }
 
 async function listCodexResumeHistory(
