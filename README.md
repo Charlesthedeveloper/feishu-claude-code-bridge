@@ -173,7 +173,7 @@ This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local
 - `/new low`: clears the current session and immediately pins the new session to low effort. This does **not** create a new Feishu group; `/new chat [name]` is still the group-creation command.
 - `/compact [instructions]`: sends `/compact` into the current resumable session/thread. Use this before a long-running chat gets slow or unstable, especially when you want to keep the topic but reduce context size.
 - GUI MCP: Claude runs include `bridge-mcp.json` and the `mcp__gui__*` allowlist so the agent can control local desktop GUI when macOS screen/session state allows it.
-- PAC/NO_PROXY: macOS launchd does not inherit your terminal proxy settings. `start` and `restart` capture the current shell's `http_proxy` / `https_proxy` / `all_proxy` and `NO_PROXY` / `no_proxy` into the LaunchAgent plist, so Feishu/Lark API traffic can stay direct while Claude/Codex traffic uses your proxy. After changing PAC/global/proxy settings, run `./bin/lark-channel-bridge.mjs restart --profile <name>` from a shell that has the desired proxy env.
+- PAC/NO_PROXY: macOS launchd does not inherit your terminal proxy settings. `start` and `restart` capture the current shell's `http_proxy` / `https_proxy` / `all_proxy` and `NO_PROXY` / `no_proxy` into the LaunchAgent plist. The bridge now relies on `@larksuite/channel`'s built-in `respectProxyEnv` and HTTP timeout support, so Feishu/Lark API traffic can stay direct while Claude/Codex traffic uses your proxy. After changing PAC/global/proxy settings, run `./bin/lark-channel-bridge.mjs restart --profile <name>` from a shell that has the desired proxy env.
 
 For quick personal chats like fitness logs or naming brainstorms, use `low` or `medium`. Reserve `high`, `xhigh`, or `max` for code, debugging, and serious research where extra reasoning is worth the latency and upstream flakiness risk.
 
@@ -333,7 +333,6 @@ This local branch also keeps targeted coverage for the customizations:
 
 - `tests/integration/commands/local-customizations.test.ts`
 - `tests/unit/session/session-store-effort.test.ts`
-- `tests/unit/bot/network-config.test.ts`
 - `tests/process/claude-adapter.test.ts`
 
 ## Optional telemetry
