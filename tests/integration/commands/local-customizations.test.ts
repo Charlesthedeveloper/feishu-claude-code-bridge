@@ -5,7 +5,11 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  type AgentKind,
+  type ProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { SessionStore } from '../../../src/session/store.js';
@@ -68,6 +72,30 @@ describe('local bridge customizations', () => {
     expect(lastMarkdown(h.channel)).toContain('已清除默认 Claude model');
   });
 
+  it('sets Codex effort and model using Codex-native slash semantics', async () => {
+    const h = await createHarness('codex');
+
+    await expect(h.run('/effort minimal')).resolves.toBe(true);
+    expect(h.sessions.getEffort('chat-1')).toBe('minimal');
+    expect(lastMarkdown(h.channel)).toContain('minimal');
+
+    await expect(h.run('/effort max')).resolves.toBe(true);
+    expect(h.sessions.getEffort('chat-1')).toBe('xhigh');
+    expect(lastMarkdown(h.channel)).toContain('xhigh');
+
+    await expect(h.run('/model gpt-5.5')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('gpt-5.5');
+    expect(lastMarkdown(h.channel)).toContain('默认 Codex model 已设为 `gpt-5.5`');
+
+    await expect(h.run('/model fable')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('fable');
+    expect(lastMarkdown(h.channel)).toContain('默认 Codex model 已设为 `fable`');
+
+    await expect(h.run('/model default')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('');
+    expect(lastMarkdown(h.channel)).toContain('已清除默认 Codex model');
+  });
+
   it('runs /compact against the current session without creating a fresh one', async () => {
     const h = await createHarness();
     const cwd = await realpath(h.tmp.workspace);
@@ -98,7 +126,7 @@ describe('local bridge customizations', () => {
   });
 });
 
-async function createHarness(): Promise<Harness> {
+async function createHarness(agentKind: AgentKind = 'claude'): Promise<Harness> {
   const tmp = await createTmpProfile('local-custom-');
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
@@ -109,10 +137,10 @@ async function createHarness(): Promise<Harness> {
   const runExecutor = new RunExecutor({ agent, pool, activeRuns });
   const workspaceRealpath = await realpath(tmp.workspace);
   const configPath = join(tmp.root, 'config.json');
-  const profileConfig = appConfig(workspaceRealpath);
-  await saveRootConfig(createRootConfig('claude', profileConfig), configPath);
+  const profileConfig = appConfig(workspaceRealpath, agentKind);
+  await saveRootConfig(createRootConfig(agentKind, profileConfig), configPath);
   const controls = {
-    profile: 'claude',
+    profile: agentKind,
     profileConfig,
     botOwnerId: 'ou-owner',
     ownerRefreshState: 'ok',
@@ -150,13 +178,23 @@ async function createHarness(): Promise<Harness> {
   return { tmp, channel, sessions, workspaces, activeRuns, agent, controls, run };
 }
 
-function appConfig(defaultWorkspace: string): ProfileConfig {
+function appConfig(defaultWorkspace: string, agentKind: AgentKind): ProfileConfig {
   const config = createDefaultProfileConfig({
-    agentKind: 'claude',
+    agentKind,
     accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
     access: { admins: ['ou-admin'] },
     sandbox: { defaultMode: 'read-only', maxMode: 'workspace-write' },
     preferences: { maxConcurrentRuns: 2, effort: 'xhigh' },
+    ...(agentKind === 'codex'
+      ? {
+          codex: {
+            binaryPath: '/usr/local/bin/codex',
+            inheritCodexHome: true,
+            ignoreUserConfig: false,
+            ignoreRules: false,
+          },
+        }
+      : {}),
   });
   config.workspaces.default = defaultWorkspace;
   return config;

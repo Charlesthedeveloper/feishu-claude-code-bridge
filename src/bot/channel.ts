@@ -29,8 +29,8 @@ import { renderText } from '../card/text-renderer';
 import { tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
-  getAgentEffort,
-  getAgentModel,
+  getAgentEffortForAgent,
+  getAgentModelForAgent,
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
@@ -707,8 +707,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     workspaces,
     executor,
     now: Date.now(),
-    model: getAgentModel(controls.cfg),
-    effort: sessions.getEffort(scope) ?? getAgentEffort(controls.cfg),
+    model: getAgentModelForAgent(controls.cfg, controls.profileConfig.agentKind),
+    effort:
+      sessions.getEffort(scope) ??
+      getAgentEffortForAgent(controls.cfg, controls.profileConfig.agentKind),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
     observability: {
       profile: controls.profile,

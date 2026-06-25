@@ -26,19 +26,19 @@ import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/m
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
 import type { AgentEffort, AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
-  getAgentEffort,
-  getAgentModel,
+  getAgentEffortForAgent,
+  getAgentModelForAgent,
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
   getRequireMentionInGroup,
   getRunIdleTimeoutMs,
   getShowToolCalls,
-  normalizeAgentEffort,
-  normalizeAgentModel,
+  normalizeAgentEffortForAgent,
+  normalizeAgentModelForAgent,
   secretKeyForApp,
 } from '../config/schema';
-import type { ProfileAccess, ProfileConfig } from '../config/profile-schema';
+import type { AgentKind, ProfileAccess, ProfileConfig } from '../config/profile-schema';
 import { resolveAppPaths } from '../config/app-paths';
 import { accessToClaudePermissionMode } from '../config/permissions';
 import {
@@ -310,13 +310,28 @@ function isAbsoluteOrTilde(p: string): boolean {
   return isAbsolute(p) || p === '~' || p.startsWith('~/');
 }
 
-const EFFORT_USAGE =
-  '用法：`/effort [low|medium|high|xhigh|max|default]` 或 `/new [low|medium|high|xhigh|max]`';
-const MODEL_USAGE =
-  '用法：`/model [fable|opus|default|<claude-model-id>]`，例如 `/model fable` 或 `/model claude-fable-5`';
+function effortUsage(agentKind: AgentKind): string {
+  return agentKind === 'codex'
+    ? '用法：`/effort [none|minimal|low|medium|high|xhigh|default]` 或 `/new [none|minimal|low|medium|high|xhigh]`'
+    : '用法：`/effort [low|medium|high|xhigh|max|default]` 或 `/new [low|medium|high|xhigh|max]`';
+}
+
+function modelUsage(agentKind: AgentKind): string {
+  return agentKind === 'codex'
+    ? '用法：`/model [default|<codex-model-id>]`，例如 `/model gpt-5.5`'
+    : '用法：`/model [fable|opus|default|<claude-model-id>]`，例如 `/model fable` 或 `/model claude-fable-5`';
+}
+
+function defaultModelLabel(agentKind: AgentKind): string {
+  return agentKind === 'codex' ? 'Codex CLI default' : 'Claude Code default';
+}
 
 function formatEffort(effort: AgentEffort): string {
   switch (effort) {
+    case 'none':
+      return '`none`（Codex 原生：关闭 reasoning）';
+    case 'minimal':
+      return '`minimal`（Codex 原生：最低 reasoning）';
     case 'low':
       return '`low`（最快/最低 reasoning）';
     case 'medium':
@@ -326,7 +341,7 @@ function formatEffort(effort: AgentEffort): string {
     case 'xhigh':
       return '`xhigh`（extra high）';
     case 'max':
-      return '`max`（本机 Claude Code 最高档）';
+      return '`max`（Claude Code 最高档；Codex 会映射到 xhigh）';
   }
 }
 
@@ -340,7 +355,7 @@ function modelAliasNote(raw: string, model: string): string {
   return normalized && normalized !== model ? `（已将 \`${normalized}\` 映射为 \`${model}\`）` : '';
 }
 
-function parseNewEffortArg(trimmed: string): {
+function parseNewEffortArg(trimmed: string, agentKind: AgentKind): {
   effort?: AgentEffort;
   explicitDefault?: boolean;
   invalid?: boolean;
@@ -354,7 +369,7 @@ function parseNewEffortArg(trimmed: string): {
       : trimmed;
   if (!raw) return { invalid: true, raw };
   if (raw.toLowerCase() === 'default') return { explicitDefault: true, raw };
-  const effort = normalizeAgentEffort(raw);
+  const effort = normalizeAgentEffortForAgent(raw, agentKind);
   return effort ? { effort, raw } : { invalid: true, raw };
 }
 
@@ -368,9 +383,13 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     return handleNewChat(rawName, ctx);
   }
 
-  const requestedEffort = parseNewEffortArg(trimmed);
+  const requestedEffort = parseNewEffortArg(trimmed, ctx.controls.profileConfig.agentKind);
   if (requestedEffort.invalid) {
-    await reply(ctx, `❌ ${EFFORT_USAGE}\n\n示例：\`/new low\`、\`/new effort max\`、\`/new\``);
+    const example =
+      ctx.controls.profileConfig.agentKind === 'codex'
+        ? '`/new low`、`/new effort minimal`、`/new`'
+        : '`/new low`、`/new effort max`、`/new`';
+    await reply(ctx, `❌ ${effortUsage(ctx.controls.profileConfig.agentKind)}\n\n示例：${example}`);
     return;
   }
 
@@ -392,7 +411,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
   const effortLine = requestedEffort.effort
     ? `\neffort: ${formatEffort(requestedEffort.effort)}${effortAliasNote(requestedEffort.raw ?? '', requestedEffort.effort)}`
     : requestedEffort.explicitDefault
-      ? `\neffort: 跟随全局（${formatEffort(getAgentEffort(ctx.controls.cfg))}）`
+      ? `\neffort: 跟随全局（${formatEffort(getAgentEffortForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind))}）`
       : '';
   await reply(
     ctx,
@@ -792,21 +811,33 @@ function pruneResumeCandidates(now = Date.now()): void {
 async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
   const raw = args.trim();
   const trimmed = raw.toLowerCase();
-  const globalEffort = getAgentEffort(ctx.controls.cfg);
+  const agentKind = ctx.controls.profileConfig.agentKind;
+  const globalEffort = getAgentEffortForAgent(ctx.controls.cfg, agentKind);
 
   if (!trimmed) {
     const sessionEffort = ctx.sessions.getEffort(ctx.scope);
-    const usage = [
-      '',
-      '用法：',
-      '- `/effort low` 当前 session 设低 reasoning，适合快速聊天/健身记录',
-      '- `/effort high` 或 `/effort xhigh` 当前 session 提高 reasoning',
-      '- `/effort max` 当前 session 使用本机 Claude Code 最高档',
-      '- `/effort default` 清除 session 覆盖，回退全局',
-      '- `/new low` 新会话并同时设低 effort',
-      '',
-      '_别名：`extra high` → `xhigh`；`ultra` → `max`_',
-    ].join('\n');
+    const usage =
+      agentKind === 'codex'
+        ? [
+            '',
+            '用法：',
+            '- `/effort none` 或 `/effort minimal` 当前 session 使用 Codex 原生低 reasoning',
+            '- `/effort low|medium|high|xhigh` 当前 session 设置 Codex reasoning effort',
+            '- `/effort max` 兼容旧命令，会映射为 Codex 的 `xhigh`',
+            '- `/effort default` 清除 session 覆盖，回退全局',
+            '- `/new minimal` 新会话并同时设低 effort',
+          ].join('\n')
+        : [
+            '',
+            '用法：',
+            '- `/effort low` 当前 session 设低 reasoning，适合快速聊天/健身记录',
+            '- `/effort high` 或 `/effort xhigh` 当前 session 提高 reasoning',
+            '- `/effort max` 当前 session 使用本机 Claude Code 最高档',
+            '- `/effort default` 清除 session 覆盖，回退全局',
+            '- `/new low` 新会话并同时设低 effort',
+            '',
+            '_别名：`extra high` → `xhigh`；`ultra` → `max`_',
+          ].join('\n');
     if (sessionEffort) {
       await reply(
         ctx,
@@ -830,9 +861,13 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  const effort = normalizeAgentEffort(raw);
+  const effort = normalizeAgentEffortForAgent(raw, agentKind);
   if (!effort) {
-    await reply(ctx, `❌ ${EFFORT_USAGE}\n\n别名：\`extra high\` = \`xhigh\`，\`ultra\` = \`max\``);
+    const aliasText =
+      agentKind === 'codex'
+        ? '\n\nCodex 原生支持：`none|minimal|low|medium|high|xhigh`；兼容别名：`max`/`ultra` → `xhigh`'
+        : '\n\n别名：`extra high` = `xhigh`，`ultra` = `max`';
+    await reply(ctx, `❌ ${effortUsage(agentKind)}${aliasText}`);
     return;
   }
 
@@ -933,8 +968,10 @@ async function handleCompact(args: string, ctx: CommandContext): Promise<void> {
       policy,
       sessionId,
       threadId,
-      model: getAgentModel(ctx.controls.cfg),
-      effort: ctx.sessions.getEffort(ctx.scope) ?? getAgentEffort(ctx.controls.cfg),
+      model: getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
+      effort:
+        ctx.sessions.getEffort(ctx.scope) ??
+        getAgentEffortForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
       stopGraceMs: getAgentStopGraceMs(ctx.controls.cfg),
       observability: {
         profile: ctx.controls.profile,
@@ -1127,7 +1164,8 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     emptySessionText: isCodex ? '(未建立)' : undefined,
     sessionStale: !isCodex && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
-    model: getAgentModel(ctx.controls.cfg),
+    model: getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
+    defaultModelLabel: defaultModelLabel(ctx.controls.profileConfig.agentKind),
     runtimeAccess: runtimeAccessStatus(ctx.controls.profileConfig),
     larkCliStatus: await larkCliStatus(ctx),
     activeRun: Boolean(ctx.activeRuns.get(ctx.scope)),
@@ -1136,31 +1174,32 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     ownerState: formatOwnerState(ctx),
     scope: ctx.scope,
     chatMode: ctx.chatMode,
-    effort: sessionEffort ?? getAgentEffort(ctx.controls.cfg),
+    effort: sessionEffort ?? getAgentEffortForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
     effortSource: sessionEffort ? 'session' : 'global',
   });
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
 }
 
 async function handleModel(args: string, ctx: CommandContext): Promise<void> {
-  if (ctx.controls.profileConfig.agentKind !== 'claude') {
-    await reply(ctx, '当前 profile 是 Codex。`/model` 只控制 Claude Code profile。');
-    return;
-  }
+  const agentKind = ctx.controls.profileConfig.agentKind;
+  const agentLabel = agentKind === 'codex' ? 'Codex' : 'Claude';
   const raw = args.trim();
-  const current = getAgentModel(ctx.controls.cfg);
+  const current = getAgentModelForAgent(ctx.controls.cfg, agentKind);
   if (!raw) {
     await reply(
       ctx,
-      `🧬 当前默认 Claude model：\`${current ?? 'Claude Code default'}\`\n\n${MODEL_USAGE}`,
+      `🧬 当前默认 ${agentLabel} model：\`${current ?? defaultModelLabel(agentKind)}\`\n\n${modelUsage(agentKind)}`,
     );
     return;
   }
 
   const lower = raw.toLowerCase();
-  const nextModel = lower === 'default' || lower === 'clear' ? '' : normalizeAgentModel(raw);
+  const nextModel =
+    lower === 'default' || lower === 'clear'
+      ? ''
+      : normalizeAgentModelForAgent(raw, agentKind);
   if (nextModel === undefined) {
-    await reply(ctx, `❌ ${MODEL_USAGE}`);
+    await reply(ctx, `❌ ${modelUsage(agentKind)}`);
     return;
   }
 
@@ -1175,12 +1214,15 @@ async function handleModel(args: string, ctx: CommandContext): Promise<void> {
   );
 
   if (!nextModel) {
-    await reply(ctx, '✅ 已清除默认 Claude model 覆盖，后续消息使用 Claude Code 默认模型。');
+    await reply(
+      ctx,
+      `✅ 已清除默认 ${agentLabel} model 覆盖，后续消息使用 ${defaultModelLabel(agentKind)}。`,
+    );
     return;
   }
   await reply(
     ctx,
-    `✅ 默认 Claude model 已设为 \`${nextModel}\`${modelAliasNote(raw, nextModel)}。\n下条消息开始生效。`,
+    `✅ 默认 ${agentLabel} model 已设为 \`${nextModel}\`${modelAliasNote(raw, nextModel)}。\n下条消息开始生效。`,
   );
 }
 
@@ -2119,12 +2161,13 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
   const ms = getRunIdleTimeoutMs(ctx.controls.cfg);
   const access = ctx.controls.profileConfig.access;
   const card = configFormCard({
+    agentKind: ctx.controls.profileConfig.agentKind,
     messageReply: getMessageReplyMode(ctx.controls.cfg),
     showToolCalls: getShowToolCalls(ctx.controls.cfg),
     maxConcurrentRuns: getMaxConcurrentRuns(ctx.controls.cfg),
-    model: getAgentModel(ctx.controls.cfg),
+    model: getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
-    effort: getAgentEffort(ctx.controls.cfg),
+    effort: getAgentEffortForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
     larkCliIdentity: ctx.controls.profileConfig.larkCli.identityPreset,
     allowedUsers: access.allowedUsers,
@@ -2199,7 +2242,9 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     }
   }
   const rawModel = String(fv.model ?? '').trim();
-  const model = rawModel ? normalizeAgentModel(rawModel) : '';
+  const model = rawModel
+    ? normalizeAgentModelForAgent(rawModel, ctx.controls.profileConfig.agentKind)
+    : '';
   // Parse require_mention_in_group. Empty / unexpected keeps current.
   const rawRequireMention = String(fv.require_mention_in_group ?? '').trim();
   let requireMentionInGroup: boolean;
@@ -2207,8 +2252,14 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   else if (rawRequireMention === 'no') requireMentionInGroup = false;
   else requireMentionInGroup = getRequireMentionInGroup(ctx.controls.cfg);
   const rawEffort = String(fv.effort ?? '').trim();
-  const currentEffort = getAgentEffort(ctx.controls.cfg);
-  const effort = rawEffort ? normalizeAgentEffort(rawEffort) ?? currentEffort : currentEffort;
+  const currentEffort = getAgentEffortForAgent(
+    ctx.controls.cfg,
+    ctx.controls.profileConfig.agentKind,
+  );
+  const effort = rawEffort
+    ? normalizeAgentEffortForAgent(rawEffort, ctx.controls.profileConfig.agentKind) ??
+      currentEffort
+    : currentEffort;
   const rawLarkCliIdentity = String(fv.lark_cli_identity ?? '').trim();
   const larkCliIdentity =
     rawLarkCliIdentity === 'user-default' || rawLarkCliIdentity === 'bot-only'
@@ -2302,6 +2353,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       ctx,
       formMsgId,
       configSavedCard({
+        agentKind: ctx.controls.profileConfig.agentKind,
         messageReply,
         showToolCalls,
         maxConcurrentRuns,

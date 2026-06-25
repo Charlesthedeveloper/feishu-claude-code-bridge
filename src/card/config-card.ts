@@ -1,8 +1,9 @@
 import type { KnownChat } from '../bot/lark-info';
-import type { LarkCliIdentityPreset } from '../config/profile-schema';
+import type { AgentKind, LarkCliIdentityPreset } from '../config/profile-schema';
 import type { AgentEffort, MessageReplyMode } from '../config/schema';
 
 export interface ConfigFormOpts {
+  agentKind: AgentKind;
   messageReply: MessageReplyMode;
   showToolCalls: boolean;
   maxConcurrentRuns: number;
@@ -55,6 +56,20 @@ function chatList(chatIds: string[], knownChats: KnownChat[]): string {
 
 /** Form card for `/config`. */
 export function configFormCard(opts: ConfigFormOpts): object {
+  const modelLabel = opts.agentKind === 'codex' ? '默认 Codex model' : '默认 Claude model';
+  const modelHelp =
+    opts.agentKind === 'codex'
+      ? '_例如 `gpt-5.5`。留空 = Codex CLI 默认模型_'
+      : '_例如 `claude-fable-5`、`claude-opus-4-8`。留空 = Claude Code 默认模型_';
+  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.5' : 'claude-fable-5';
+  const effortHelp =
+    opts.agentKind === 'codex'
+      ? '_控制 Codex `model_reasoning_effort`；快速聊天用 none/minimal，复杂代码/研究用 high/xhigh_'
+      : '_控制新 run 的 Claude Code thinking 预算；健身/闲聊可用 low，复杂代码/研究用 high/max_';
+  const effortOptions =
+    opts.agentKind === 'codex'
+      ? (['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const)
+      : (['low', 'medium', 'high', 'xhigh', 'max'] as const);
   const accessElements: object[] = [
     {
       tag: 'markdown',
@@ -170,34 +185,27 @@ export function configFormCard(opts: ConfigFormOpts): object {
             },
             {
               tag: 'markdown',
-              content:
-                '\n**默认 Claude model**\n' +
-                '_例如 `claude-fable-5`、`claude-opus-4-8`。留空 = Claude Code 默认模型_',
+              content: `\n**${modelLabel}**\n${modelHelp}`,
             },
             {
               tag: 'input',
               name: 'model',
               default_value: opts.model ?? '',
-              placeholder: { tag: 'plain_text', content: 'claude-fable-5' },
+              placeholder: { tag: 'plain_text', content: modelPlaceholder },
               input_type: 'text',
             },
             {
               tag: 'markdown',
-              content:
-                '\n**默认 reasoning effort**\n' +
-                '_控制新 run 的 Claude Code thinking 预算；健身/闲聊可用 low，复杂代码/研究用 high/max_',
+              content: `\n**默认 reasoning effort**\n${effortHelp}`,
             },
             {
               tag: 'select_static',
               name: 'effort',
               initial_option: opts.effort,
-              options: [
-                { text: { tag: 'plain_text', content: 'low' }, value: 'low' },
-                { text: { tag: 'plain_text', content: 'medium' }, value: 'medium' },
-                { text: { tag: 'plain_text', content: 'high' }, value: 'high' },
-                { text: { tag: 'plain_text', content: 'xhigh' }, value: 'xhigh' },
-                { text: { tag: 'plain_text', content: 'max' }, value: 'max' },
-              ],
+              options: effortOptions.map((effort) => ({
+                text: { tag: 'plain_text', content: effort },
+                value: effort,
+              })),
             },
             {
               tag: 'markdown',
@@ -275,6 +283,7 @@ export function configFormCard(opts: ConfigFormOpts): object {
 }
 
 export function configSavedCard(opts: ConfigFormOpts): object {
+  const defaultModel = opts.agentKind === 'codex' ? 'Codex CLI default' : 'Claude Code default';
   const replyLabel =
     opts.messageReply === 'card'
       ? '交互卡片'
@@ -296,7 +305,7 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
-            `**默认 model**:\`${opts.model || 'Claude Code default'}\`\n` +
+            `**默认 model**:\`${opts.model || defaultModel}\`\n` +
             `**默认 effort**:\`${opts.effort}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             `**lark-cli 身份策略**:\`${opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +

@@ -34,7 +34,7 @@ export interface AgentRunOptions {
   sessionId?: string;
   threadId?: string;
   model?: string;
-  /** Reasoning effort passed to supported agents, currently Claude Code. */
+  /** Reasoning effort passed to supported agents. */
   effort?: string;
   images?: readonly string[];
   sandbox?: CodexSandboxMode;

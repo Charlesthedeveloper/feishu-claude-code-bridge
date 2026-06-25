@@ -68,7 +68,8 @@ export interface SecretsConfig {
  */
 export type MessageReplyMode = 'card' | 'markdown' | 'text';
 
-export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type AgentEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type AgentKindName = 'claude' | 'codex';
 
 /**
  * Access control settings. Empty lists are fail-closed in the v2 policy:
@@ -140,13 +141,14 @@ export interface AppPreferences {
    */
   agentStopGraceMs?: number;
   /**
-   * Default reasoning effort for Claude Code runs. Per-scope `/effort`
-   * overrides this. Unknown values fall back to `xhigh`.
+   * Default reasoning effort for agent runs. Per-scope `/effort` overrides
+   * this. Claude supports low/medium/high/xhigh/max; Codex supports
+   * none/minimal/low/medium/high/xhigh. Unknown values fall back to `xhigh`.
    */
   effort?: string;
   /**
-   * Optional Claude Code model id passed as `--model`. Undefined means let
-   * Claude Code use its own default.
+   * Optional agent model id. Claude profiles apply Claude aliases before
+   * passing `--model`; Codex profiles pass the raw model id through.
    */
   model?: string;
 }
@@ -259,6 +261,8 @@ export function getAgentStopGraceMs(cfg: AppConfig): number {
 }
 
 const VALID_EFFORT_LEVELS: ReadonlySet<AgentEffort> = new Set([
+  'none',
+  'minimal',
   'low',
   'medium',
   'high',
@@ -267,6 +271,9 @@ const VALID_EFFORT_LEVELS: ReadonlySet<AgentEffort> = new Set([
 ]);
 
 const EFFORT_ALIASES: Record<string, AgentEffort> = {
+  off: 'none',
+  no: 'none',
+  min: 'minimal',
   xh: 'xhigh',
   'x-high': 'xhigh',
   xhigh: 'xhigh',
@@ -293,6 +300,30 @@ export function getAgentEffort(cfg: AppConfig): AgentEffort {
   return 'xhigh';
 }
 
+export function normalizeAgentEffortForAgent(
+  raw: string,
+  agentKind: AgentKindName,
+): AgentEffort | undefined {
+  const effort = normalizeAgentEffort(raw);
+  if (!effort) return undefined;
+  if (agentKind === 'codex') {
+    return effort === 'max' ? 'xhigh' : effort;
+  }
+  if (effort === 'none' || effort === 'minimal') {
+    return undefined;
+  }
+  return effort;
+}
+
+export function getAgentEffortForAgent(
+  cfg: AppConfig,
+  agentKind: AgentKindName,
+): AgentEffort {
+  const raw = cfg.preferences?.effort;
+  if (typeof raw === 'string') return normalizeAgentEffortForAgent(raw, agentKind) ?? 'xhigh';
+  return 'xhigh';
+}
+
 const MODEL_ALIASES: Record<string, string> = {
   fable: 'claude-fable-5',
   fable5: 'claude-fable-5',
@@ -312,10 +343,28 @@ export function normalizeAgentModel(raw: string): string | undefined {
   return MODEL_ALIASES[normalized] ?? MODEL_ALIASES[normalized.replace(/[-.]/g, '')] ?? trimmed;
 }
 
+export function normalizeAgentModelForAgent(
+  raw: string,
+  agentKind: AgentKindName,
+): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return agentKind === 'claude' ? normalizeAgentModel(trimmed) : trimmed;
+}
+
 export function getAgentModel(cfg: AppConfig): string | undefined {
   const raw = cfg.preferences?.model;
   if (typeof raw !== 'string') return undefined;
   return normalizeAgentModel(raw);
+}
+
+export function getAgentModelForAgent(
+  cfg: AppConfig,
+  agentKind: AgentKindName,
+): string | undefined {
+  const raw = cfg.preferences?.model;
+  if (typeof raw !== 'string') return undefined;
+  return normalizeAgentModelForAgent(raw, agentKind);
 }
 
 export function getRunIdleTimeoutMs(cfg: AppConfig): number | undefined {

@@ -15,7 +15,7 @@ For a product walkthrough, see the [Feishu document](https://larkcommunity.feish
 - **Multiple workspaces**: use `/cd` to switch the current project, and `/ws` to save and reuse common project directories.
 - **Images and files**: send them to the bot directly, and the bridge downloads them locally for the agent.
 - **Interactive cards**: `/help`, `/ws list`, and `/status` return cards with clickable buttons.
-- **Local customizations in this branch**: Claude reasoning effort controls, `/compact`, GUI MCP tools for desktop automation, and PAC-friendly Feishu/Lark direct-connect handling.
+- **Local customizations in this branch**: agent-aware model/effort controls, `/compact`, GUI MCP tools for desktop automation, and PAC-friendly Feishu/Lark direct-connect handling.
 
 ## Prerequisites
 
@@ -147,8 +147,8 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/resume`, `/resume use <session-id>` | Resume compatible history for the same agent, working directory, and permission mode; Claude session ids from `claude --resume ...` can be bound directly when they exist under the current cwd |
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
-| `/effort [low\|medium\|high\|xhigh\|max\|default]` | Set or clear the current session's Claude reasoning effort override |
-| `/model [fable\|opus\|default\|<model-id>]` | Set or clear the Claude profile's default model, for example `claude-fable-5` |
+| `/effort [level\|default]` | Set or clear the current session's reasoning effort override. Claude supports `low|medium|high|xhigh|max`; Codex supports `none|minimal|low|medium|high|xhigh` |
+| `/model [default\|<model-id>]` | Set or clear the current profile's default model. Claude supports `fable`/`opus` aliases; Codex passes model ids through unchanged |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
 | `/invite group` | Allow the current group to use the bot |
@@ -164,18 +164,20 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 
 DMs do not require an @ mention. Groups and topic groups require `@bot` by default; `@all` is ignored. Cloud-doc comments in supported document types run when the bot is mentioned.
 
-### Local Claude controls
+### Local agent controls
 
 This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local controls that are useful for a personal Feishu bridge:
 
-- `/effort low|medium|high|xhigh|max`: changes the current chat/topic's Claude Code `--effort` for future runs. `/effort default` removes the override and falls back to `/config`.
-- `/model fable|opus|default|<model-id>`: changes the current Claude profile's default Claude Code `--model` for future runs. `fable` maps to `claude-fable-5`, `opus` maps to `claude-opus-4-8`, and `default` removes the bridge override.
+- `/effort low|medium|high|xhigh|max`: in a Claude profile, changes the current chat/topic's Claude Code `--effort` for future runs. `/effort default` removes the override and falls back to `/config`.
+- `/effort none|minimal|low|medium|high|xhigh`: in a Codex profile, changes the current chat/topic's Codex `model_reasoning_effort` for future runs. `/effort max` is accepted for compatibility and maps to Codex `xhigh`, because native Codex does not have a `max` effort.
+- `/model fable|opus|default|<model-id>`: in a Claude profile, changes the default Claude Code `--model`. `fable` maps to `claude-fable-5`, `opus` maps to `claude-opus-4-8`, and `default` removes the bridge override.
+- `/model default|<model-id>`: in a Codex profile, changes the default Codex `--model` and passes the model id through unchanged, for example `/model gpt-5.5`.
 - `/new low`: clears the current session and immediately pins the new session to low effort. This does **not** create a new Feishu group; `/new chat [name]` is still the group-creation command.
 - `/compact [instructions]`: sends `/compact` into the current resumable session/thread. Use this before a long-running chat gets slow or unstable, especially when you want to keep the topic but reduce context size.
 - GUI MCP: Claude runs include `bridge-mcp.json` and the `mcp__gui__*` allowlist so the agent can control local desktop GUI when macOS screen/session state allows it.
 - PAC/NO_PROXY: macOS launchd does not inherit your terminal proxy settings. `start` and `restart` capture the current shell's `http_proxy` / `https_proxy` / `all_proxy` and `NO_PROXY` / `no_proxy` into the LaunchAgent plist. The bridge now relies on `@larksuite/channel`'s built-in `respectProxyEnv` and HTTP timeout support, so Feishu/Lark API traffic can stay direct while Claude/Codex traffic uses your proxy. After changing PAC/global/proxy settings, run `./bin/lark-channel-bridge.mjs restart --profile <name>` from a shell that has the desired proxy env.
 
-For quick personal chats like fitness logs or naming brainstorms, use `low` or `medium`. Reserve `high`, `xhigh`, or `max` for code, debugging, and serious research where extra reasoning is worth the latency and upstream flakiness risk.
+For quick personal chats like fitness logs or naming brainstorms, use `low` or `medium` on Claude, and `none`, `minimal`, or `low` on Codex. Reserve `high`, `xhigh`, or Claude `max` for code, debugging, and serious research where extra reasoning is worth the latency and upstream flakiness risk.
 
 ## lark-cli identity policy
 
@@ -334,6 +336,8 @@ This local branch also keeps targeted coverage for the customizations:
 - `tests/integration/commands/local-customizations.test.ts`
 - `tests/unit/session/session-store-effort.test.ts`
 - `tests/process/claude-adapter.test.ts`
+- `tests/process/codex-adapter.test.ts`
+- `tests/unit/agent/codex-argv.test.ts`
 
 ## Optional telemetry
 

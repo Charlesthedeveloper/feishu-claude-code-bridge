@@ -204,6 +204,37 @@ describe('CodexAdapter process contract', () => {
     expect(record.argv).toEqual(buildCodexArgs({ cwd, sandbox: 'read-only' }));
   });
 
+  it('passes per-run model and effort to the Codex CLI argv contract', async () => {
+    const fake = await createFakeCodex({
+      lines: [{ type: 'turn.completed' }],
+    });
+    cleanup.push(fake.dir);
+    const cwd = await realpath(fake.dir);
+
+    const run = new CodexAdapter({
+      binary: fake.path,
+      profileStateDir: fake.dir,
+      sandbox: 'read-only',
+    }).run({
+      runId: 'run-model-effort',
+      prompt: 'model effort',
+      cwd,
+      model: 'gpt-5.5',
+      effort: 'xhigh',
+    });
+
+    await collect(run.events);
+    const record = await readRecord(fake.recordPath);
+    expect(record.argv).toEqual(
+      buildCodexArgs({
+        cwd,
+        sandbox: 'read-only',
+        model: 'gpt-5.5',
+        effort: 'xhigh',
+      }),
+    );
+  });
+
   it('honors a profile-configured Codex home', async () => {
     const fake = await createFakeCodex({
       lines: [{ type: 'turn.completed' }],

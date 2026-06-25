@@ -118,4 +118,53 @@ describe('Codex argv contract', () => {
     ).toContain('--ignore-user-config');
   });
 
+  it('passes model and native Codex reasoning effort through global flags', () => {
+    expect(
+      buildCodexArgs({
+        cwd: '/repo',
+        sandbox: 'read-only',
+        model: 'gpt-5.5',
+        effort: 'minimal',
+      }),
+    ).toEqual([
+      'exec',
+      '--json',
+      '--sandbox',
+      'read-only',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'shell_environment_policy.inherit="all"',
+      '--model',
+      'gpt-5.5',
+      '-c',
+      'model_reasoning_effort="minimal"',
+      '--ignore-rules',
+      '--skip-git-repo-check',
+      '-C',
+      '/repo',
+      '-',
+    ]);
+  });
+
+  it('maps the bridge max compatibility effort to Codex xhigh', () => {
+    expect(
+      buildCodexArgs({
+        cwd: '/repo',
+        sandbox: 'read-only',
+        effort: 'max',
+      }),
+    ).toContain('model_reasoning_effort="xhigh"');
+  });
+
+  it('rejects unsupported Codex reasoning efforts before spawning', () => {
+    expect(() =>
+      buildCodexArgs({
+        cwd: '/repo',
+        sandbox: 'read-only',
+        effort: 'ultra',
+      }),
+    ).toThrow(/unsupported Codex reasoning effort/);
+  });
+
 });
