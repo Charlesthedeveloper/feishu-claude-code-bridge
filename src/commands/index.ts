@@ -360,6 +360,39 @@ function modelAliasNote(raw: string, model: string): string {
   return normalized && normalized !== model ? `（已将 \`${normalized}\` 映射为 \`${model}\`）` : '';
 }
 
+function modelDetail(model: string | undefined, agentKind: AgentKind): string | undefined {
+  if (!model || agentKind !== 'claude') return undefined;
+  switch (model) {
+    case 'opus':
+      return 'Claude Code latest Opus alias；当前本机 Claude Code 2.1.x = Opus 4.8。要强制 1M 用 `opus-1m`。';
+    case 'sonnet':
+      return 'Claude Code latest Sonnet alias；当前本机 Claude Code 2.1.x = Sonnet 4.6。';
+    case 'haiku':
+      return 'Claude Code latest Haiku alias；当前本机 Claude Code 2.1.x = Haiku 4.5。';
+    case 'fable':
+      return 'Claude Code Fable alias；如果账号/额度不可用，Claude Code 会返回模型不可用。';
+    case 'claude-opus-4-8':
+      return 'Opus 4.8。';
+    case 'claude-opus-4-8[1m]':
+      return 'Opus 4.8，1M context。';
+    case 'claude-sonnet-4-6':
+      return 'Sonnet 4.6。';
+    case 'claude-sonnet-4-6[1m]':
+      return 'Sonnet 4.6，1M context。';
+    case 'claude-haiku-4-5':
+      return 'Haiku 4.5。';
+    case 'claude-fable-5':
+      return 'Fable 5。';
+    default:
+      return undefined;
+  }
+}
+
+function modelDetailLine(model: string | undefined, agentKind: AgentKind): string {
+  const detail = modelDetail(model, agentKind);
+  return detail ? `\n说明：${detail}` : '';
+}
+
 function parseNewEffortArg(trimmed: string, agentKind: AgentKind): {
   effort?: AgentEffort;
   explicitDefault?: boolean;
@@ -1162,6 +1195,7 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const sessionEffort = ctx.sessions.getEffort(ctx.scope);
   const sessionModel = ctx.sessions.getModel(ctx.scope);
   const globalModel = getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind);
+  const effectiveModel = sessionModel ?? globalModel;
   const isCodex = ctx.controls.profileConfig.agentKind === 'codex';
   const catalogEntry =
     isCodex && ctx.sessionCatalog && ctx.sessionCatalogIdentity
@@ -1174,8 +1208,9 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     emptySessionText: isCodex ? '(未建立)' : undefined,
     sessionStale: !isCodex && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
-    model: sessionModel ?? globalModel,
+    model: effectiveModel,
     modelSource: sessionModel ? 'session' : 'global',
+    modelDetail: modelDetail(effectiveModel, ctx.controls.profileConfig.agentKind),
     defaultModelLabel: defaultModelLabel(ctx.controls.profileConfig.agentKind),
     runtimeAccess: runtimeAccessStatus(ctx.controls.profileConfig),
     larkCliStatus: await larkCliStatus(ctx),
@@ -1203,7 +1238,7 @@ async function handleModel(args: string, ctx: CommandContext): Promise<void> {
     const global = globalModel ?? defaultModelLabel(agentKind);
     await reply(
       ctx,
-      `🧬 当前 session ${agentLabel} model：\`${current}\`（${source}）\n全局默认：\`${global}\`\n\n${modelUsage(agentKind)}`,
+      `🧬 当前 session ${agentLabel} model：\`${current}\`（${source}）${modelDetailLine(sessionModel ?? globalModel, agentKind)}\n全局默认：\`${global}\`${modelDetailLine(globalModel, agentKind)}\n\n${modelUsage(agentKind)}`,
     );
     return;
   }
@@ -1244,7 +1279,7 @@ async function handleModel(args: string, ctx: CommandContext): Promise<void> {
     }
     await reply(
       ctx,
-      `✅ 全局默认 ${agentLabel} model 已设为 \`${nextGlobalModel}\`${modelAliasNote(globalRaw, nextGlobalModel)}。\n没有 session 覆盖的 chat 下条消息开始生效。`,
+      `✅ 全局默认 ${agentLabel} model 已设为 \`${nextGlobalModel}\`${modelAliasNote(globalRaw, nextGlobalModel)}。${modelDetailLine(nextGlobalModel, agentKind)}\n没有 session 覆盖的 chat 下条消息开始生效。`,
     );
     return;
   }
@@ -1273,7 +1308,7 @@ async function handleModel(args: string, ctx: CommandContext): Promise<void> {
   log.info('command', 'model-set', { scope: ctx.scope, model: nextModel });
   await reply(
     ctx,
-    `✅ 当前 session ${agentLabel} model 已设为 \`${nextModel}\`${modelAliasNote(raw, nextModel)}。\n只影响这个 chat/topic，下条消息开始生效。`,
+    `✅ 当前 session ${agentLabel} model 已设为 \`${nextModel}\`${modelAliasNote(raw, nextModel)}。${modelDetailLine(nextModel, agentKind)}\n只影响这个 chat/topic，下条消息开始生效。`,
   );
 }
 

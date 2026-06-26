@@ -72,6 +72,7 @@ export interface StatusInfo {
   agentName: string;
   model?: string;
   modelSource: 'session' | 'global';
+  modelDetail?: string;
   defaultModelLabel?: string;
   runtimeAccess: {
     label: string;
@@ -113,7 +114,7 @@ export function statusCard(info: StatusInfo): object {
     `🧩 **profile**: ${escapeMd(info.profileName)}`,
     `📁 **cwd**: ${cwdLine}`,
     `🔗 **session**: ${sessionLine}`,
-    `🧬 **model**: \`${escapeCode(info.model ?? info.defaultModelLabel ?? 'Agent default')}\` ${modelSource}`,
+    `🧬 **model**: \`${escapeCode(info.model ?? info.defaultModelLabel ?? 'Agent default')}\` ${modelSource}${info.modelDetail ? ` · ${escapeMd(info.modelDetail)}` : ''}`,
     `🧠 **effort**: \`${info.effort}\` ${effortSource}`,
     `🤖 **agent**: ${escapeMd(info.agentName)}`,
     `🛡 **${escapeMd(info.runtimeAccess.label)}**: ${escapeMd(info.runtimeAccess.value)}`,
