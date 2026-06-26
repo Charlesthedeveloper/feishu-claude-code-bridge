@@ -707,7 +707,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     workspaces,
     executor,
     now: Date.now(),
-    model: getAgentModelForAgent(controls.cfg, controls.profileConfig.agentKind),
+    model:
+      sessions.getModel(scope) ??
+      getAgentModelForAgent(controls.cfg, controls.profileConfig.agentKind),
     effort:
       sessions.getEffort(scope) ??
       getAgentEffortForAgent(controls.cfg, controls.profileConfig.agentKind),

@@ -313,13 +313,16 @@ function isAbsoluteOrTilde(p: string): boolean {
 function effortUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
     ? '用法：`/effort [none|minimal|low|medium|high|xhigh|default]` 或 `/new [none|minimal|low|medium|high|xhigh]`'
-    : '用法：`/effort [low|medium|high|xhigh|max|default]` 或 `/new [low|medium|high|xhigh|max]`';
+    : '用法：`/effort [low|medium|high|xhigh|max|ultracode|default]` 或 `/new [low|medium|high|xhigh|max|ultracode]`';
 }
 
 function modelUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
-    ? '用法：`/model [default|<codex-model-id>]`，例如 `/model gpt-5.5`'
-    : '用法：`/model [fable|opus|default|<claude-model-id>]`，例如 `/model fable` 或 `/model claude-fable-5`';
+    ? '用法：`/model [default|<codex-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。例如 `/model gpt-5.5`'
+    : [
+        '用法：`/model [default|opus|sonnet|sonnet-1m|haiku|fable|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
+        '常用：`/model opus`、`/model sonnet`、`/model sonnet-1m`、`/model haiku`、`/model claude-opus-4-8[1m]`。',
+      ].join('\n');
 }
 
 function defaultModelLabel(agentKind: AgentKind): string {
@@ -342,6 +345,8 @@ function formatEffort(effort: AgentEffort): string {
       return '`xhigh`（extra high）';
     case 'max':
       return '`max`（Claude Code 最高档；Codex 会映射到 xhigh）';
+    case 'ultracode':
+      return '`ultracode`（Claude Code：xhigh + dynamic workflows）';
   }
 }
 
@@ -388,7 +393,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     const example =
       ctx.controls.profileConfig.agentKind === 'codex'
         ? '`/new low`、`/new effort minimal`、`/new`'
-        : '`/new low`、`/new effort max`、`/new`';
+        : '`/new low`、`/new effort max`、`/new ultracode`、`/new`';
     await reply(ctx, `❌ ${effortUsage(ctx.controls.profileConfig.agentKind)}\n\n示例：${example}`);
     return;
   }
@@ -833,10 +838,11 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
             '- `/effort low` 当前 session 设低 reasoning，适合快速聊天/健身记录',
             '- `/effort high` 或 `/effort xhigh` 当前 session 提高 reasoning',
             '- `/effort max` 当前 session 使用本机 Claude Code 最高档',
+            '- `/effort ultracode` 当前 session 使用 xhigh + dynamic workflows，适合复杂代码/研究',
             '- `/effort default` 清除 session 覆盖，回退全局',
             '- `/new low` 新会话并同时设低 effort',
             '',
-            '_别名：`extra high` → `xhigh`；`ultra` → `max`_',
+            '_别名：`extra high` → `xhigh`；`ultra` → `max`；`ultra-code` → `ultracode`_',
           ].join('\n');
     if (sessionEffort) {
       await reply(
@@ -866,7 +872,7 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
     const aliasText =
       agentKind === 'codex'
         ? '\n\nCodex 原生支持：`none|minimal|low|medium|high|xhigh`；兼容别名：`max`/`ultra` → `xhigh`'
-        : '\n\n别名：`extra high` = `xhigh`，`ultra` = `max`';
+        : '\n\nClaude 支持：`low|medium|high|xhigh|max|ultracode`；别名：`extra high` = `xhigh`，`ultra` = `max`';
     await reply(ctx, `❌ ${effortUsage(agentKind)}${aliasText}`);
     return;
   }
@@ -968,7 +974,9 @@ async function handleCompact(args: string, ctx: CommandContext): Promise<void> {
       policy,
       sessionId,
       threadId,
-      model: getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
+      model:
+        ctx.sessions.getModel(ctx.scope) ??
+        getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
       effort:
         ctx.sessions.getEffort(ctx.scope) ??
         getAgentEffortForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
@@ -1152,6 +1160,8 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const cwd = effectiveWorkspaceCwd(ctx);
   const sess = ctx.sessions.getRaw(ctx.scope);
   const sessionEffort = ctx.sessions.getEffort(ctx.scope);
+  const sessionModel = ctx.sessions.getModel(ctx.scope);
+  const globalModel = getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind);
   const isCodex = ctx.controls.profileConfig.agentKind === 'codex';
   const catalogEntry =
     isCodex && ctx.sessionCatalog && ctx.sessionCatalogIdentity
@@ -1164,7 +1174,8 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     emptySessionText: isCodex ? '(未建立)' : undefined,
     sessionStale: !isCodex && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
-    model: getAgentModelForAgent(ctx.controls.cfg, ctx.controls.profileConfig.agentKind),
+    model: sessionModel ?? globalModel,
+    modelSource: sessionModel ? 'session' : 'global',
     defaultModelLabel: defaultModelLabel(ctx.controls.profileConfig.agentKind),
     runtimeAccess: runtimeAccessStatus(ctx.controls.profileConfig),
     larkCliStatus: await larkCliStatus(ctx),
@@ -1184,16 +1195,60 @@ async function handleModel(args: string, ctx: CommandContext): Promise<void> {
   const agentKind = ctx.controls.profileConfig.agentKind;
   const agentLabel = agentKind === 'codex' ? 'Codex' : 'Claude';
   const raw = args.trim();
-  const current = getAgentModelForAgent(ctx.controls.cfg, agentKind);
+  const sessionModel = ctx.sessions.getModel(ctx.scope);
+  const globalModel = getAgentModelForAgent(ctx.controls.cfg, agentKind);
   if (!raw) {
+    const current = sessionModel ?? globalModel ?? defaultModelLabel(agentKind);
+    const source = sessionModel ? 'session 覆盖' : '跟随全局';
+    const global = globalModel ?? defaultModelLabel(agentKind);
     await reply(
       ctx,
-      `🧬 当前默认 ${agentLabel} model：\`${current ?? defaultModelLabel(agentKind)}\`\n\n${modelUsage(agentKind)}`,
+      `🧬 当前 session ${agentLabel} model：\`${current}\`（${source}）\n全局默认：\`${global}\`\n\n${modelUsage(agentKind)}`,
     );
     return;
   }
 
   const lower = raw.toLowerCase();
+  if (lower === 'global' || lower.startsWith('global ')) {
+    const globalRaw = raw.slice('global'.length).trim();
+    if (!globalRaw) {
+      await reply(ctx, `❌ ${modelUsage(agentKind)}`);
+      return;
+    }
+    const globalLower = globalRaw.toLowerCase();
+    const nextGlobalModel =
+      globalLower === 'default' || globalLower === 'clear'
+        ? ''
+        : normalizeAgentModelForAgent(globalRaw, agentKind);
+    if (nextGlobalModel === undefined) {
+      await reply(ctx, `❌ ${modelUsage(agentKind)}`);
+      return;
+    }
+
+    await savePreferencesConfig(
+      ctx,
+      {
+        ...(ctx.controls.cfg.preferences ?? {}),
+        model: nextGlobalModel,
+      },
+      getRequireMentionInGroup(ctx.controls.cfg),
+      ctx.controls.profileConfig.larkCli.identityPreset,
+    );
+
+    if (!nextGlobalModel) {
+      await reply(
+        ctx,
+        `✅ 已清除全局默认 ${agentLabel} model 覆盖。没有 session 覆盖的 chat 会使用 ${defaultModelLabel(agentKind)}。`,
+      );
+      return;
+    }
+    await reply(
+      ctx,
+      `✅ 全局默认 ${agentLabel} model 已设为 \`${nextGlobalModel}\`${modelAliasNote(globalRaw, nextGlobalModel)}。\n没有 session 覆盖的 chat 下条消息开始生效。`,
+    );
+    return;
+  }
+
   const nextModel =
     lower === 'default' || lower === 'clear'
       ? ''
@@ -1203,26 +1258,22 @@ async function handleModel(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  await savePreferencesConfig(
-    ctx,
-    {
-      ...(ctx.controls.cfg.preferences ?? {}),
-      model: nextModel,
-    },
-    getRequireMentionInGroup(ctx.controls.cfg),
-    ctx.controls.profileConfig.larkCli.identityPreset,
-  );
-
   if (!nextModel) {
+    const cleared = ctx.sessions.clearModelOverride(ctx.scope);
+    log.info('command', 'model-clear', { scope: ctx.scope, cleared });
     await reply(
       ctx,
-      `✅ 已清除默认 ${agentLabel} model 覆盖，后续消息使用 ${defaultModelLabel(agentKind)}。`,
+      cleared
+        ? `✅ 已清除当前 session ${agentLabel} model 覆盖，回退到全局（\`${globalModel ?? defaultModelLabel(agentKind)}\`）。`
+        : `当前 session 本来就没设过 model 覆盖，跟随全局（\`${globalModel ?? defaultModelLabel(agentKind)}\`）。`,
     );
     return;
   }
+  ctx.sessions.setModel(ctx.scope, nextModel);
+  log.info('command', 'model-set', { scope: ctx.scope, model: nextModel });
   await reply(
     ctx,
-    `✅ 默认 ${agentLabel} model 已设为 \`${nextModel}\`${modelAliasNote(raw, nextModel)}。\n下条消息开始生效。`,
+    `✅ 当前 session ${agentLabel} model 已设为 \`${nextModel}\`${modelAliasNote(raw, nextModel)}。\n只影响这个 chat/topic，下条消息开始生效。`,
   );
 }
 

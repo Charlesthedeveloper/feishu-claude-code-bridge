@@ -65,6 +65,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     const effort = opts.effort ?? this.defaultEffort;
+    const claudeEffort = effort === 'ultracode' ? 'xhigh' : effort;
     const args = [
       '-p',
       opts.prompt,
@@ -78,7 +79,8 @@ export class ClaudeAdapter implements AgentAdapter {
     ];
     if (opts.sessionId) args.push('--resume', opts.sessionId);
     if (opts.model) args.push('--model', opts.model);
-    if (effort) args.push('--effort', effort);
+    if (claudeEffort) args.push('--effort', claudeEffort);
+    if (effort === 'ultracode') args.push('--settings', JSON.stringify({ ultracode: true }));
 
     // Local desktop automation for the user's Feishu bridge. Print mode does
     // not load Codex/Claude desktop plugins, so declare the GUI MCP server

@@ -51,25 +51,60 @@ describe('local bridge customizations', () => {
 
     await expect(h.run('/effort default')).resolves.toBe(true);
     expect(h.sessions.getEffort('chat-1')).toBeUndefined();
+
+    await expect(h.run('/effort ultracode')).resolves.toBe(true);
+    expect(h.sessions.getEffort('chat-1')).toBe('ultracode');
+    expect(lastMarkdown(h.channel)).toContain('ultracode');
   });
 
-  it('sets the Claude profile model through /model aliases', async () => {
+  it('sets the Claude session model through /model aliases without mutating global defaults', async () => {
     const h = await createHarness();
+    h.controls.cfg.preferences = {
+      ...(h.controls.cfg.preferences ?? {}),
+      model: 'claude-opus-4-8',
+    };
 
     await expect(h.run('/model')).resolves.toBe(true);
-    expect(lastMarkdown(h.channel)).toContain('Claude Code default');
+    expect(lastMarkdown(h.channel)).toContain('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('跟随全局');
 
     await expect(h.run('/model fable')).resolves.toBe(true);
-    expect(h.controls.cfg.preferences?.model).toBe('claude-fable-5');
-    expect(lastMarkdown(h.channel)).toContain('claude-fable-5');
+    expect(h.sessions.getModel('chat-1')).toBe('fable');
+    expect(h.sessions.getModel('chat-2')).toBeUndefined();
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('fable');
 
     await expect(h.run('/model opus')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('opus');
     expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
-    expect(lastMarkdown(h.channel)).toContain('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('opus');
+
+    await expect(h.run('/model sonnet-4-6')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-4-6');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('claude-sonnet-4-6');
+
+    await expect(h.run('/model sonnet-1m')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-4-6[1m]');
+    expect(lastMarkdown(h.channel)).toContain('claude-sonnet-4-6[1m]');
 
     await expect(h.run('/model default')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBeUndefined();
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('已清除当前 session Claude model');
+  });
+
+  it('can still set the Claude global default model explicitly', async () => {
+    const h = await createHarness();
+
+    await expect(h.run('/model global fable')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('fable');
+    expect(h.sessions.getModel('chat-1')).toBeUndefined();
+    expect(lastMarkdown(h.channel)).toContain('全局默认 Claude model 已设为 `fable`');
+
+    await expect(h.run('/model global default')).resolves.toBe(true);
     expect(h.controls.cfg.preferences?.model).toBe('');
-    expect(lastMarkdown(h.channel)).toContain('已清除默认 Claude model');
+    expect(lastMarkdown(h.channel)).toContain('已清除全局默认 Claude model');
   });
 
   it('sets Codex effort and model using Codex-native slash semantics', async () => {
@@ -84,16 +119,19 @@ describe('local bridge customizations', () => {
     expect(lastMarkdown(h.channel)).toContain('xhigh');
 
     await expect(h.run('/model gpt-5.5')).resolves.toBe(true);
-    expect(h.controls.cfg.preferences?.model).toBe('gpt-5.5');
-    expect(lastMarkdown(h.channel)).toContain('默认 Codex model 已设为 `gpt-5.5`');
+    expect(h.sessions.getModel('chat-1')).toBe('gpt-5.5');
+    expect(h.controls.cfg.preferences?.model).toBeUndefined();
+    expect(lastMarkdown(h.channel)).toContain('当前 session Codex model 已设为 `gpt-5.5`');
 
     await expect(h.run('/model fable')).resolves.toBe(true);
-    expect(h.controls.cfg.preferences?.model).toBe('fable');
-    expect(lastMarkdown(h.channel)).toContain('默认 Codex model 已设为 `fable`');
+    expect(h.sessions.getModel('chat-1')).toBe('fable');
+    expect(h.controls.cfg.preferences?.model).toBeUndefined();
+    expect(lastMarkdown(h.channel)).toContain('当前 session Codex model 已设为 `fable`');
 
     await expect(h.run('/model default')).resolves.toBe(true);
-    expect(h.controls.cfg.preferences?.model).toBe('');
-    expect(lastMarkdown(h.channel)).toContain('已清除默认 Codex model');
+    expect(h.sessions.getModel('chat-1')).toBeUndefined();
+    expect(h.controls.cfg.preferences?.model).toBeUndefined();
+    expect(lastMarkdown(h.channel)).toContain('已清除当前 session Codex model');
   });
 
   it('runs /compact against the current session without creating a fresh one', async () => {
@@ -101,6 +139,7 @@ describe('local bridge customizations', () => {
     const cwd = await realpath(h.tmp.workspace);
     h.sessions.set('chat-1', 'session-existing', cwd);
     h.sessions.setEffort('chat-1', 'medium');
+    h.sessions.setModel('chat-1', 'claude-opus-4-8');
     h.controls.cfg.preferences = {
       ...(h.controls.cfg.preferences ?? {}),
       model: 'claude-fable-5',
@@ -118,7 +157,7 @@ describe('local bridge customizations', () => {
       prompt: '/compact keep naming preferences',
       cwd,
       sessionId: 'session-existing',
-      model: 'claude-fable-5',
+      model: 'claude-opus-4-8',
       effort: 'medium',
     });
     expect(h.sessions.resumeFor('chat-1', cwd)).toBe('session-existing');

@@ -68,7 +68,15 @@ export interface SecretsConfig {
  */
 export type MessageReplyMode = 'card' | 'markdown' | 'text';
 
-export type AgentEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type AgentEffort =
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'ultracode';
 export type AgentKindName = 'claude' | 'codex';
 
 /**
@@ -142,7 +150,7 @@ export interface AppPreferences {
   agentStopGraceMs?: number;
   /**
    * Default reasoning effort for agent runs. Per-scope `/effort` overrides
-   * this. Claude supports low/medium/high/xhigh/max; Codex supports
+   * this. Claude supports low/medium/high/xhigh/max/ultracode; Codex supports
    * none/minimal/low/medium/high/xhigh. Unknown values fall back to `xhigh`.
    */
   effort?: string;
@@ -268,6 +276,7 @@ const VALID_EFFORT_LEVELS: ReadonlySet<AgentEffort> = new Set([
   'high',
   'xhigh',
   'max',
+  'ultracode',
 ]);
 
 const EFFORT_ALIASES: Record<string, AgentEffort> = {
@@ -283,6 +292,9 @@ const EFFORT_ALIASES: Record<string, AgentEffort> = {
   ultrahigh: 'max',
   'ultra-high': 'max',
   ultra: 'max',
+  ucode: 'ultracode',
+  'ultra-code': 'ultracode',
+  ultracoder: 'ultracode',
 };
 
 export function normalizeAgentEffort(raw: string): AgentEffort | undefined {
@@ -307,6 +319,7 @@ export function normalizeAgentEffortForAgent(
   const effort = normalizeAgentEffort(raw);
   if (!effort) return undefined;
   if (agentKind === 'codex') {
+    if (effort === 'ultracode') return undefined;
     return effort === 'max' ? 'xhigh' : effort;
   }
   if (effort === 'none' || effort === 'minimal') {
@@ -325,15 +338,43 @@ export function getAgentEffortForAgent(
 }
 
 const MODEL_ALIASES: Record<string, string> = {
-  fable: 'claude-fable-5',
-  fable5: 'claude-fable-5',
+  fable: 'fable',
+  fable5: 'fable',
   'fable-5': 'claude-fable-5',
+  fable_5: 'claude-fable-5',
   'claude-fable': 'claude-fable-5',
-  opus: 'claude-opus-4-8',
-  opus48: 'claude-opus-4-8',
-  'opus-4-8': 'claude-opus-4-8',
-  'opus-4.8': 'claude-opus-4-8',
-  'claude-opus': 'claude-opus-4-8',
+  opus: 'opus',
+  'opus-1m': 'claude-opus-4-8[1m]',
+  opus1m: 'claude-opus-4-8[1m]',
+  'opus-4-8': 'claude-opus-4-8[1m]',
+  'opus-4.8': 'claude-opus-4-8[1m]',
+  'opus-4-8-1m': 'claude-opus-4-8[1m]',
+  'opus-4.8-1m': 'claude-opus-4-8[1m]',
+  opus481m: 'claude-opus-4-8[1m]',
+  opus48: 'claude-opus-4-8[1m]',
+  'claude-opus': 'opus',
+  sonnet: 'sonnet',
+  sonnet46: 'claude-sonnet-4-6',
+  'sonnet-4-6': 'claude-sonnet-4-6',
+  'sonnet-4.6': 'claude-sonnet-4-6',
+  'sonnet-4-6-1m': 'claude-sonnet-4-6[1m]',
+  'sonnet-4.6-1m': 'claude-sonnet-4-6[1m]',
+  'sonnet-1m': 'claude-sonnet-4-6[1m]',
+  sonnet1m: 'claude-sonnet-4-6[1m]',
+  sonnet461m: 'claude-sonnet-4-6[1m]',
+  'claude-sonnet': 'sonnet',
+  haiku: 'haiku',
+  haiku45: 'claude-haiku-4-5',
+  'haiku-4-5': 'claude-haiku-4-5',
+  'haiku-4.5': 'claude-haiku-4-5',
+  'claude-haiku': 'haiku',
+  '1': '',
+  '2': 'opus',
+  '3': 'sonnet',
+  '4': 'claude-sonnet-4-6[1m]',
+  '5': 'haiku',
+  '6': 'claude-opus-4-8[1m]',
+  '7': 'fable',
 };
 
 export function normalizeAgentModel(raw: string): string | undefined {

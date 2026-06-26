@@ -17,6 +17,8 @@ export interface SessionEntry {
   idleTimeoutMinutes?: number;
   /** Per-scope reasoning effort override. Undefined = follow global default. */
   effort?: AgentEffort;
+  /** Per-scope model override. Undefined = follow global default. */
+  model?: string;
 }
 
 type SessionMap = Record<string, SessionEntry>;
@@ -48,14 +50,24 @@ export class SessionStore {
           typeof entry.idleTimeoutMinutes === 'number' ? entry.idleTimeoutMinutes : undefined;
         const effort =
           typeof entry.effort === 'string' ? normalizeAgentEffort(entry.effort) : undefined;
+        const model =
+          typeof entry.model === 'string' && entry.model.trim() ? entry.model.trim() : undefined;
         const hasSession = sessionId !== undefined && cwd !== undefined;
-        if (!hasSession && idleTimeoutMinutes === undefined && effort === undefined) continue;
+        if (
+          !hasSession &&
+          idleTimeoutMinutes === undefined &&
+          effort === undefined &&
+          model === undefined
+        ) {
+          continue;
+        }
         this.data[chatId] = {
           ...(sessionId !== undefined ? { sessionId } : {}),
           ...(cwd !== undefined ? { cwd } : {}),
           updatedAt: entry.updatedAt,
           ...(idleTimeoutMinutes !== undefined ? { idleTimeoutMinutes } : {}),
           ...(effort !== undefined ? { effort } : {}),
+          ...(model !== undefined ? { model } : {}),
         };
       }
     } catch (err) {
@@ -92,6 +104,7 @@ export class SessionStore {
         ? { idleTimeoutMinutes: prev.idleTimeoutMinutes }
         : {}),
       ...(prev?.effort !== undefined ? { effort: prev.effort } : {}),
+      ...(prev?.model !== undefined ? { model: prev.model } : {}),
     };
     this.schedulePersist();
   }
@@ -117,7 +130,7 @@ export class SessionStore {
     if (!prev || (prev.sessionId === undefined && prev.cwd === undefined)) return false;
 
     const { sessionId: _sessionId, cwd: _cwd, ...rest } = prev;
-    if (rest.idleTimeoutMinutes === undefined && rest.effort === undefined) {
+    if (rest.idleTimeoutMinutes === undefined && rest.effort === undefined && rest.model === undefined) {
       delete this.data[chatId];
     } else {
       this.data[chatId] = { ...rest, updatedAt: Date.now() };
@@ -174,6 +187,34 @@ export class SessionStore {
     const prev = this.data[chatId];
     if (!prev || prev.effort === undefined) return false;
     const { effort: _, ...rest } = prev;
+    this.data[chatId] = { ...rest, updatedAt: Date.now() };
+    this.schedulePersist();
+    return true;
+  }
+
+  /** Per-scope model override. `undefined` means no override set. */
+  getModel(chatId: string): string | undefined {
+    return this.data[chatId]?.model;
+  }
+
+  setModel(chatId: string, model: string): void {
+    const trimmed = model.trim();
+    if (!trimmed) return;
+    const prev = this.data[chatId];
+    this.data[chatId] = {
+      ...(prev ?? { updatedAt: Date.now() }),
+      model: trimmed,
+      updatedAt: Date.now(),
+    };
+    this.schedulePersist();
+  }
+
+  /** Remove the model override so this scope falls back to the global default.
+   * Returns true if something was actually removed. */
+  clearModelOverride(chatId: string): boolean {
+    const prev = this.data[chatId];
+    if (!prev || prev.model === undefined) return false;
+    const { model: _, ...rest } = prev;
     this.data[chatId] = { ...rest, updatedAt: Date.now() };
     this.schedulePersist();
     return true;

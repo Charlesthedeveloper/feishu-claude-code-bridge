@@ -137,6 +137,38 @@ describe('ClaudeAdapter process contract', () => {
     expect(record.argv[6]).toBe('bypassPermissions');
   });
 
+  it('maps ultracode to Claude Code xhigh effort plus session settings', async () => {
+    const fake = await createFakeClaude({
+      lines: [{ type: 'result', session_id: 'sess-ultra' }],
+    });
+    cleanup.push(fake.dir);
+
+    const run = new ClaudeAdapter({ binary: fake.path }).run({
+      runId: 'run-ultracode',
+      prompt: 'go deep',
+      cwd: fake.dir,
+      model: 'sonnet',
+      effort: 'ultracode',
+    });
+
+    expect(await collect(run.events)).toEqual([
+      { type: 'done', sessionId: 'sess-ultra', terminationReason: 'normal' },
+    ]);
+    const record = await readRecord(fake.recordPath);
+
+    expect(record.argv).toEqual(
+      expect.arrayContaining([
+        '--model',
+        'sonnet',
+        '--effort',
+        'xhigh',
+        '--settings',
+        JSON.stringify({ ultracode: true }),
+      ]),
+    );
+    expect(record.argv).not.toContain('ultracode');
+  });
+
   it('includes stderr when the process exits non-zero', async () => {
     const fake = await createFakeClaude({
       lines: [{ type: 'assistant', message: { content: [{ type: 'text', text: 'before failure' }] } }],

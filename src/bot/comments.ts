@@ -260,7 +260,10 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
         policy,
         sessionId,
         threadId,
-        model: getAgentModelForAgent(controls.cfg, controls.profileConfig.agentKind),
+        model:
+          sessions.getModel(agentSessionScopeId) ??
+          sessions.getModel(docSessionScopeId) ??
+          getAgentModelForAgent(controls.cfg, controls.profileConfig.agentKind),
         effort:
           sessions.getEffort(agentSessionScopeId) ??
           sessions.getEffort(docSessionScopeId) ??

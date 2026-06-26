@@ -60,16 +60,16 @@ export function configFormCard(opts: ConfigFormOpts): object {
   const modelHelp =
     opts.agentKind === 'codex'
       ? '_例如 `gpt-5.5`。留空 = Codex CLI 默认模型_'
-      : '_例如 `claude-fable-5`、`claude-opus-4-8`。留空 = Claude Code 默认模型_';
-  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.5' : 'claude-fable-5';
+      : '_例如 `opus`、`sonnet`、`haiku`、`claude-sonnet-4-6[1m]`。留空 = Claude Code 默认模型_';
+  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.5' : 'opus';
   const effortHelp =
     opts.agentKind === 'codex'
       ? '_控制 Codex `model_reasoning_effort`；快速聊天用 none/minimal，复杂代码/研究用 high/xhigh_'
-      : '_控制新 run 的 Claude Code thinking 预算；健身/闲聊可用 low，复杂代码/研究用 high/max_';
+      : '_控制新 run 的 Claude Code thinking 预算；健身/闲聊可用 low，复杂代码/研究用 high/max/ultracode_';
   const effortOptions =
     opts.agentKind === 'codex'
       ? (['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const)
-      : (['low', 'medium', 'high', 'xhigh', 'max'] as const);
+      : (['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'] as const);
   const accessElements: object[] = [
     {
       tag: 'markdown',

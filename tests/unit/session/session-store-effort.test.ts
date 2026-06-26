@@ -6,7 +6,7 @@ import { SessionStore } from '../../../src/session/store.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 
-describe('SessionStore effort override', () => {
+describe('SessionStore per-session overrides', () => {
   afterEach(async () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
@@ -26,12 +26,28 @@ describe('SessionStore effort override', () => {
     expect(reloaded.getEffort('chat-a')).toBe('low');
   });
 
+  it('preserves model across run starts and reloads', async () => {
+    const file = await sessionFile();
+    const store = new SessionStore(file);
+
+    store.setModel('chat-a', 'claude-fable-5');
+    store.set('chat-a', 'session-1', '/tmp/project');
+    await store.flush();
+
+    const reloaded = new SessionStore(file);
+    await reloaded.load();
+
+    expect(reloaded.resumeFor('chat-a', '/tmp/project')).toBe('session-1');
+    expect(reloaded.getModel('chat-a')).toBe('claude-fable-5');
+  });
+
   it('clears only session identity after a silent timeout', async () => {
     const file = await sessionFile();
     const store = new SessionStore(file);
 
     store.set('chat-a', 'session-1', '/tmp/project');
     store.setEffort('chat-a', 'medium');
+    store.setModel('chat-a', 'claude-opus-4-8');
     expect(store.clearSession('chat-a')).toBe(true);
     await store.flush();
 
@@ -42,6 +58,7 @@ describe('SessionStore effort override', () => {
     expect(reloaded.getRaw('chat-a')?.sessionId).toBeUndefined();
     expect(reloaded.getRaw('chat-a')?.cwd).toBeUndefined();
     expect(reloaded.getEffort('chat-a')).toBe('medium');
+    expect(reloaded.getModel('chat-a')).toBe('claude-opus-4-8');
   });
 
   it('normalizes effort aliases while loading persisted state', async () => {
@@ -56,6 +73,19 @@ describe('SessionStore effort override', () => {
     await store.load();
 
     expect(store.getEffort('chat-a')).toBe('xhigh');
+  });
+
+  it('preserves ultracode effort across reloads', async () => {
+    const file = await sessionFile();
+    const store = new SessionStore(file);
+
+    store.setEffort('chat-a', 'ultracode');
+    await store.flush();
+
+    const reloaded = new SessionStore(file);
+    await reloaded.load();
+
+    expect(reloaded.getEffort('chat-a')).toBe('ultracode');
   });
 });
 

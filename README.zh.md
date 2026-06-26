@@ -147,7 +147,8 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/resume` | 恢复同 agent、工作目录、权限模式兼容的历史会话 |
 | `/status` | 查看 profile、agent、工作目录、会话、lark-cli 身份和运行状态 |
 | `/config` | 调整展示偏好、访问控制和 lark-cli 身份策略 |
-| `/effort [low\|medium\|high\|xhigh\|max\|default]` | 设置或清除当前会话的 Claude reasoning effort 覆盖 |
+| `/effort [low\|medium\|high\|xhigh\|max\|ultracode\|default]` | 设置或清除当前会话的 Claude reasoning effort 覆盖 |
+| `/model [default\|<model-id>]` | 设置或清除当前会话的模型覆盖；Claude 支持 `opus`、`sonnet`、`haiku`、`fable` 等原生别名 |
 | `/invite user @某人` | 允许用户私聊使用 bot |
 | `/invite admin @某人` | 添加访问控制管理员 |
 | `/invite group` | 允许当前群使用 bot |
@@ -167,13 +168,15 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 
 这个分支保留 upstream 0.2.2 的 profile/Codex 架构，同时加回几个适合个人飞书 bridge 的本地定制：
 
-- `/effort low|medium|high|xhigh|max`：修改当前 chat/topic 后续 Claude Code run 的 `--effort`。`/effort default` 清除当前会话覆盖，回到 `/config` 里的全局默认。
+- `/effort low|medium|high|xhigh|max|ultracode`：修改当前 chat/topic 后续 Claude Code run 的 reasoning 档位。`ultracode` 会传成 `--effort xhigh`，同时打开 Claude Code session 的 dynamic workflows。`/effort default` 清除当前会话覆盖，回到 `/config` 里的全局默认。
+- `/model opus|sonnet|sonnet-1m|haiku|fable|default|<model-id>`：修改当前 chat/topic 后续 Claude Code run 的 `--model`，不会影响其它群。Bridge 会保留 Claude Code 原生别名，也会把常见写法映射到可用 ID，例如 `sonnet-4-6` → `claude-sonnet-4-6`，`sonnet-1m` → `claude-sonnet-4-6[1m]`，`opus-1m` → `claude-opus-4-8[1m]`。`default` 清除当前会话覆盖，回到 `/config` 里的全局默认。
+- `/model global <model-id|default>`：显式修改 profile 全局默认模型，只影响没有 session 覆盖的 chat/topic。日常按主题调模型时优先用普通 `/model <id>`。
 - `/new low`：在当前 chat/topic 清空 session，并让新 session 从 low effort 开始。它**不会**新建飞书群；新建群仍然是 `/new chat [name]`。
 - `/compact [说明]`：向当前可恢复 session/thread 发送 `/compact`。长会话变慢、上下文太大但又不想丢主题时先用它。
 - GUI MCP：Claude run 会加载 `bridge-mcp.json` 并允许 `mcp__gui__*` 工具，所以在 macOS 屏幕/会话状态允许时，agent 可以做本地桌面 GUI 操作。
 - PAC/NO_PROXY：Feishu/Lark API 请求会尊重 `NO_PROXY`，因此 `open.feishu.cn` / `open.larksuite.com` 可以直连，而 Claude/Codex 流量继续走代理。
 
-健身记录、日常闲聊、起名发散这类轻任务，建议用 `low` 或 `medium`。代码、debug、严肃研究再用 `high`、`xhigh` 或 `max`，否则更慢，也更容易遇到上游抖动。
+健身记录、日常闲聊、起名发散这类轻任务，建议用 `low` 或 `medium`。代码、debug、严肃研究再用 `high`、`xhigh`、`max` 或 `ultracode`，否则更慢，也更容易遇到上游抖动。
 
 ## lark-cli 身份策略
 
