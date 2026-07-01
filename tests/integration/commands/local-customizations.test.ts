@@ -74,6 +74,11 @@ describe('local bridge customizations', () => {
     expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
     expect(lastMarkdown(h.channel)).toContain('fable');
 
+    await expect(h.run('/model fable5')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('claude-fable-5');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('claude-fable-5');
+
     await expect(h.run('/model opus')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('opus');
     expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
@@ -83,6 +88,11 @@ describe('local bridge customizations', () => {
     expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-4-6');
     expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
     expect(lastMarkdown(h.channel)).toContain('claude-sonnet-4-6');
+
+    await expect(h.run('/model sonnet5')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-5');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('claude-sonnet-5');
 
     await expect(h.run('/model sonnet-1m')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-4-6[1m]');

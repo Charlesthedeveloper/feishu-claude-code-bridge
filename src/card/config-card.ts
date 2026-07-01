@@ -60,7 +60,7 @@ export function configFormCard(opts: ConfigFormOpts): object {
   const modelHelp =
     opts.agentKind === 'codex'
       ? '_例如 `gpt-5.5`。留空 = Codex CLI 默认模型_'
-      : '_例如 `opus`、`sonnet`、`haiku`、`claude-sonnet-4-6[1m]`。留空 = Claude Code 默认模型_';
+      : '_例如 `sonnet5`、`fable5`、`opus`、`sonnet`、`haiku`。留空 = Claude Code 默认模型_';
   const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.5' : 'opus';
   const effortHelp =
     opts.agentKind === 'codex'

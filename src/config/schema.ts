@@ -339,7 +339,7 @@ export function getAgentEffortForAgent(
 
 const MODEL_ALIASES: Record<string, string> = {
   fable: 'fable',
-  fable5: 'fable',
+  fable5: 'claude-fable-5',
   'fable-5': 'claude-fable-5',
   fable_5: 'claude-fable-5',
   'claude-fable': 'claude-fable-5',
@@ -354,6 +354,10 @@ const MODEL_ALIASES: Record<string, string> = {
   opus48: 'claude-opus-4-8[1m]',
   'claude-opus': 'opus',
   sonnet: 'sonnet',
+  sonnet5: 'claude-sonnet-5',
+  'sonnet-5': 'claude-sonnet-5',
+  'sonnet-5-1m': 'claude-sonnet-5',
+  sonnet51m: 'claude-sonnet-5',
   sonnet46: 'claude-sonnet-4-6',
   'sonnet-4-6': 'claude-sonnet-4-6',
   'sonnet-4.6': 'claude-sonnet-4-6',

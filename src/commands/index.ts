@@ -320,8 +320,8 @@ function modelUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
     ? '用法：`/model [default|<codex-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。例如 `/model gpt-5.5`'
     : [
-        '用法：`/model [default|opus|sonnet|sonnet-1m|haiku|fable|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
-        '常用：`/model opus`、`/model sonnet`、`/model sonnet-1m`、`/model haiku`、`/model claude-opus-4-8[1m]`。',
+        '用法：`/model [default|opus|sonnet|sonnet5|sonnet-1m|haiku|fable|fable5|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
+        '常用：`/model sonnet5`、`/model sonnet`、`/model opus`、`/model fable5`、`/model claude-opus-4-8[1m]`。',
       ].join('\n');
 }
 
@@ -366,7 +366,7 @@ function modelDetail(model: string | undefined, agentKind: AgentKind): string | 
     case 'opus':
       return 'Claude Code latest Opus alias；当前本机 Claude Code 2.1.x = Opus 4.8。要强制 1M 用 `opus-1m`。';
     case 'sonnet':
-      return 'Claude Code latest Sonnet alias；当前本机 Claude Code 2.1.x = Sonnet 4.6。';
+      return 'Claude Code latest Sonnet alias；alias 可能随 Claude Code 发布节奏变化。要强制 Sonnet 5 用 `sonnet5` / `claude-sonnet-5`。';
     case 'haiku':
       return 'Claude Code latest Haiku alias；当前本机 Claude Code 2.1.x = Haiku 4.5。';
     case 'fable':
@@ -379,6 +379,8 @@ function modelDetail(model: string | undefined, agentKind: AgentKind): string | 
       return 'Sonnet 4.6。';
     case 'claude-sonnet-4-6[1m]':
       return 'Sonnet 4.6，1M context。';
+    case 'claude-sonnet-5':
+      return 'Sonnet 5。';
     case 'claude-haiku-4-5':
       return 'Haiku 4.5。';
     case 'claude-fable-5':

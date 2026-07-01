@@ -148,7 +148,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/effort [level\|default]` | Set or clear the current session's reasoning effort override. Claude supports `low|medium|high|xhigh|max|ultracode`; Codex supports `none|minimal|low|medium|high|xhigh` |
-| `/model [default\|<model-id>]` | Set or clear the current session's model override. Claude supports native aliases such as `opus`, `sonnet`, `haiku`, `fable` plus full IDs; Codex passes model ids through unchanged |
+| `/model [default\|<model-id>]` | Set or clear the current session's model override. Claude supports aliases such as `opus`, `sonnet`, `sonnet5`, `haiku`, `fable`, `fable5` plus full IDs; Codex passes model ids through unchanged |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
 | `/invite group` | Allow the current group to use the bot |
@@ -170,7 +170,7 @@ This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local
 
 - `/effort low|medium|high|xhigh|max|ultracode`: in a Claude profile, changes the current chat/topic's Claude Code effort for future runs. `ultracode` is sent as `--effort xhigh` plus Claude Code session settings for dynamic workflows. `/effort default` removes the override and falls back to `/config`.
 - `/effort none|minimal|low|medium|high|xhigh`: in a Codex profile, changes the current chat/topic's Codex `model_reasoning_effort` for future runs. `/effort max` is accepted for compatibility and maps to Codex `xhigh`, because native Codex does not have a `max` effort.
-- `/model opus|sonnet|sonnet-1m|haiku|fable|default|<model-id>`: in a Claude profile, changes only the current chat/topic's Claude Code `--model` override. The bridge preserves Claude Code's native aliases (`opus`, `sonnet`, `haiku`, `fable`) and maps common explicit forms such as `sonnet-4-6` to `claude-sonnet-4-6`, `sonnet-1m` to `claude-sonnet-4-6[1m]`, and `opus-1m` to `claude-opus-4-8[1m]`. `default` removes the current session override so it falls back to `/config`.
+- `/model opus|sonnet|sonnet5|sonnet-1m|haiku|fable|fable5|default|<model-id>`: in a Claude profile, changes only the current chat/topic's Claude Code `--model` override. The bridge preserves Claude Code's native aliases (`opus`, `sonnet`, `haiku`, `fable`) and maps common explicit forms such as `sonnet5` to `claude-sonnet-5`, `fable5` to `claude-fable-5`, `sonnet-4-6` to `claude-sonnet-4-6`, `sonnet-1m` to `claude-sonnet-4-6[1m]`, and `opus-1m` to `claude-opus-4-8[1m]`. `default` removes the current session override so it falls back to `/config`.
 - `/model default|<model-id>`: in a Codex profile, changes only the current chat/topic's Codex `--model` override and passes the model id through unchanged, for example `/model gpt-5.5`.
 - `/model global <model-id|default>`: explicitly changes the profile-wide default model used by chats without a session override. Use this sparingly; for most per-topic work, prefer plain `/model <id>`.
 - `/new low`: clears the current session and immediately pins the new session to low effort. This does **not** create a new Feishu group; `/new chat [name]` is still the group-creation command.
