@@ -55,6 +55,10 @@ describe('local bridge customizations', () => {
     await expect(h.run('/effort ultracode')).resolves.toBe(true);
     expect(h.sessions.getEffort('chat-1')).toBe('ultracode');
     expect(lastMarkdown(h.channel)).toContain('ultracode');
+
+    await expect(h.run('/effort auto')).resolves.toBe(true);
+    expect(h.sessions.getEffort('chat-1')).toBeUndefined();
+    expect(lastMarkdown(h.channel)).toContain('auto');
   });
 
   it('sets the Claude session model through /model aliases without mutating global defaults', async () => {
@@ -79,6 +83,10 @@ describe('local bridge customizations', () => {
     expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
     expect(lastMarkdown(h.channel)).toContain('claude-fable-5');
 
+    await expect(h.run('/model best')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('best');
+    expect(lastMarkdown(h.channel)).toContain('best');
+
     await expect(h.run('/model opus')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('opus');
     expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
@@ -95,8 +103,12 @@ describe('local bridge customizations', () => {
     expect(lastMarkdown(h.channel)).toContain('claude-sonnet-5');
 
     await expect(h.run('/model sonnet-1m')).resolves.toBe(true);
-    expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-4-6[1m]');
-    expect(lastMarkdown(h.channel)).toContain('claude-sonnet-4-6[1m]');
+    expect(h.sessions.getModel('chat-1')).toBe('sonnet[1m]');
+    expect(lastMarkdown(h.channel)).toContain('sonnet[1m]');
+
+    await expect(h.run('/model opus-1m')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('opus[1m]');
+    expect(lastMarkdown(h.channel)).toContain('opus[1m]');
 
     await expect(h.run('/model default')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBeUndefined();

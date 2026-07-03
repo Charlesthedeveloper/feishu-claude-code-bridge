@@ -60,16 +60,21 @@ export function configFormCard(opts: ConfigFormOpts): object {
   const modelHelp =
     opts.agentKind === 'codex'
       ? '_例如 `gpt-5.5`。留空 = Codex CLI 默认模型_'
-      : '_例如 `sonnet5`、`fable5`、`opus`、`sonnet`、`haiku`。留空 = Claude Code 默认模型_';
-  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.5' : 'opus';
+      : '_例如 `sonnet`、`sonnet5`、`fable`、`fable5`、`best`、`opus[1m]`。留空 = Claude Code 默认模型（当前 Sonnet 5）_';
+  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.5' : 'sonnet';
   const effortHelp =
     opts.agentKind === 'codex'
       ? '_控制 Codex `model_reasoning_effort`；快速聊天用 none/minimal，复杂代码/研究用 high/xhigh_'
-      : '_控制新 run 的 Claude Code thinking 预算；健身/闲聊可用 low，复杂代码/研究用 high/max/ultracode_';
+      : '_控制新 run 的 Claude Code effort；官方持久默认支持 low/medium/high/xhigh，max/ultracode 请在具体 chat 里用 `/effort` 临时设置_';
   const effortOptions =
     opts.agentKind === 'codex'
       ? (['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const)
-      : (['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'] as const);
+      : (['low', 'medium', 'high', 'xhigh'] as const);
+  const effortInitial = (effortOptions as readonly string[]).includes(opts.effort)
+    ? opts.effort
+    : opts.agentKind === 'codex'
+      ? 'medium'
+      : 'high';
   const accessElements: object[] = [
     {
       tag: 'markdown',
@@ -201,7 +206,7 @@ export function configFormCard(opts: ConfigFormOpts): object {
             {
               tag: 'select_static',
               name: 'effort',
-              initial_option: opts.effort,
+              initial_option: effortInitial,
               options: effortOptions.map((effort) => ({
                 text: { tag: 'plain_text', content: effort },
                 value: effort,

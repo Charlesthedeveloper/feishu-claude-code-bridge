@@ -313,20 +313,20 @@ function isAbsoluteOrTilde(p: string): boolean {
 function effortUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
     ? '用法：`/effort [none|minimal|low|medium|high|xhigh|default]` 或 `/new [none|minimal|low|medium|high|xhigh]`'
-    : '用法：`/effort [low|medium|high|xhigh|max|ultracode|default]` 或 `/new [low|medium|high|xhigh|max|ultracode]`';
+    : '用法：`/effort [low|medium|high|xhigh|max|ultracode|auto|default]` 或 `/new [low|medium|high|xhigh|max|ultracode|auto]`';
 }
 
 function modelUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
     ? '用法：`/model [default|<codex-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。例如 `/model gpt-5.5`'
     : [
-        '用法：`/model [default|opus|sonnet|sonnet5|sonnet-1m|haiku|fable|fable5|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
-        '常用：`/model sonnet5`、`/model sonnet`、`/model opus`、`/model fable5`、`/model claude-opus-4-8[1m]`。',
+        '用法：`/model [default|best|opus|opus[1m]|sonnet|sonnet[1m]|sonnet5|haiku|fable|fable5|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
+        '常用：`/model sonnet`、`/model sonnet5`、`/model fable`、`/model fable5`、`/model opus[1m]`、`/model best`。',
       ].join('\n');
 }
 
 function defaultModelLabel(agentKind: AgentKind): string {
-  return agentKind === 'codex' ? 'Codex CLI default' : 'Claude Code default';
+  return agentKind === 'codex' ? 'Codex CLI default' : 'Claude Code default (currently Sonnet 5)';
 }
 
 function formatEffort(effort: AgentEffort): string {
@@ -344,9 +344,9 @@ function formatEffort(effort: AgentEffort): string {
     case 'xhigh':
       return '`xhigh`（extra high）';
     case 'max':
-      return '`max`（Claude Code 最高档；Codex 会映射到 xhigh）';
+      return '`max`（Claude Code session-only 最高档；Codex 会映射到 xhigh）';
     case 'ultracode':
-      return '`ultracode`（Claude Code：xhigh + dynamic workflows）';
+      return '`ultracode`（Claude Code session-only：发送 xhigh + dynamic workflows）';
   }
 }
 
@@ -363,14 +363,20 @@ function modelAliasNote(raw: string, model: string): string {
 function modelDetail(model: string | undefined, agentKind: AgentKind): string | undefined {
   if (!model || agentKind !== 'claude') return undefined;
   switch (model) {
+    case 'best':
+      return 'Claude Code best alias；优先用当前账号可用的最强模型，Fable 5 不可用时回退。';
     case 'opus':
-      return 'Claude Code latest Opus alias；当前本机 Claude Code 2.1.x = Opus 4.8。要强制 1M 用 `opus-1m`。';
+      return 'Claude Code latest Opus alias；Anthropic API 下当前解析到 Opus 4.8。要强制 1M 用 `opus[1m]`。';
+    case 'opus[1m]':
+      return 'Claude Code official Opus 1M alias；当前为 Opus 4.8 1M。';
     case 'sonnet':
-      return 'Claude Code latest Sonnet alias；alias 可能随 Claude Code 发布节奏变化。要强制 Sonnet 5 用 `sonnet5` / `claude-sonnet-5`。';
+      return 'Claude Code latest Sonnet alias；Anthropic API 下当前解析到 Sonnet 5。';
+    case 'sonnet[1m]':
+      return 'Claude Code official Sonnet 1M alias；Sonnet 5 本身已是 native 1M。';
     case 'haiku':
       return 'Claude Code latest Haiku alias；当前本机 Claude Code 2.1.x = Haiku 4.5。';
     case 'fable':
-      return 'Claude Code Fable alias；如果账号/额度不可用，Claude Code 会返回模型不可用。';
+      return 'Claude Code Fable alias；Fable 5 已恢复访问，但仍可能受账号/组织 entitlement 限制。';
     case 'claude-opus-4-8':
       return 'Opus 4.8。';
     case 'claude-opus-4-8[1m]':
@@ -380,11 +386,11 @@ function modelDetail(model: string | undefined, agentKind: AgentKind): string | 
     case 'claude-sonnet-4-6[1m]':
       return 'Sonnet 4.6，1M context。';
     case 'claude-sonnet-5':
-      return 'Sonnet 5。';
+      return 'Sonnet 5，native 1M context；默认 effort 为 high。';
     case 'claude-haiku-4-5':
       return 'Haiku 4.5。';
     case 'claude-fable-5':
-      return 'Fable 5。';
+      return 'Fable 5；默认 effort 为 high，最高支持 max。';
     default:
       return undefined;
   }
@@ -408,7 +414,10 @@ function parseNewEffortArg(trimmed: string, agentKind: AgentKind): {
       ? trimmed.slice('effort'.length).trim()
       : trimmed;
   if (!raw) return { invalid: true, raw };
-  if (raw.toLowerCase() === 'default') return { explicitDefault: true, raw };
+  const rawLower = raw.toLowerCase();
+  if (rawLower === 'default' || (agentKind === 'claude' && rawLower === 'auto')) {
+    return { explicitDefault: true, raw };
+  }
   const effort = normalizeAgentEffortForAgent(raw, agentKind);
   return effort ? { effort, raw } : { invalid: true, raw };
 }
@@ -428,7 +437,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     const example =
       ctx.controls.profileConfig.agentKind === 'codex'
         ? '`/new low`、`/new effort minimal`、`/new`'
-        : '`/new low`、`/new effort max`、`/new ultracode`、`/new`';
+        : '`/new low`、`/new effort max`、`/new ultracode`、`/new auto`、`/new`';
     await reply(ctx, `❌ ${effortUsage(ctx.controls.profileConfig.agentKind)}\n\n示例：${example}`);
     return;
   }
@@ -872,12 +881,12 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
             '用法：',
             '- `/effort low` 当前 session 设低 reasoning，适合快速聊天/健身记录',
             '- `/effort high` 或 `/effort xhigh` 当前 session 提高 reasoning',
-            '- `/effort max` 当前 session 使用本机 Claude Code 最高档',
-            '- `/effort ultracode` 当前 session 使用 xhigh + dynamic workflows，适合复杂代码/研究',
-            '- `/effort default` 清除 session 覆盖，回退全局',
+            '- `/effort max` 当前 session 使用 Claude Code 最高档（session-only）',
+            '- `/effort ultracode` 当前 session 使用 xhigh + dynamic workflows（session-only）',
+            '- `/effort auto` 或 `/effort default` 清除 session 覆盖，回退模型/全局默认',
             '- `/new low` 新会话并同时设低 effort',
             '',
-            '_别名：`extra high` → `xhigh`；`ultra` → `max`；`ultra-code` → `ultracode`_',
+            '_别名：`extra high` → `xhigh`；`ultra` → `max`；`ultra-code` → `ultracode`。持久全局默认只建议用 `low|medium|high|xhigh`。_',
           ].join('\n');
     if (sessionEffort) {
       await reply(
@@ -890,14 +899,15 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  if (trimmed === 'default') {
+  if (trimmed === 'default' || (agentKind === 'claude' && trimmed === 'auto')) {
     const cleared = ctx.sessions.clearEffortOverride(ctx.scope);
     log.info('command', 'effort-clear', { scope: ctx.scope, cleared });
+    const label = trimmed === 'auto' ? 'auto' : 'default';
     await reply(
       ctx,
       cleared
-        ? `✅ 已清除 session effort 覆盖，回退到全局（${formatEffort(globalEffort)}）。`
-        : `当前 session 本来就没设过 effort 覆盖，跟随全局（${formatEffort(globalEffort)}）。`,
+        ? `✅ 已清除 session effort 覆盖，回到 ${label} / 全局默认（${formatEffort(globalEffort)}）。`
+        : `当前 session 本来就没设过 effort 覆盖，跟随 ${label} / 全局默认（${formatEffort(globalEffort)}）。`,
     );
     return;
   }
@@ -907,7 +917,7 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
     const aliasText =
       agentKind === 'codex'
         ? '\n\nCodex 原生支持：`none|minimal|low|medium|high|xhigh`；兼容别名：`max`/`ultra` → `xhigh`'
-        : '\n\nClaude 支持：`low|medium|high|xhigh|max|ultracode`；别名：`extra high` = `xhigh`，`ultra` = `max`';
+        : '\n\nClaude Code 支持：`low|medium|high|xhigh|max`；`ultracode` 是 session-only 工作流模式；`auto`/`default` 清除当前 chat 覆盖。';
     await reply(ctx, `❌ ${effortUsage(agentKind)}${aliasText}`);
     return;
   }

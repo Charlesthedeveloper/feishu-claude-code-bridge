@@ -150,8 +150,10 @@ export interface AppPreferences {
   agentStopGraceMs?: number;
   /**
    * Default reasoning effort for agent runs. Per-scope `/effort` overrides
-   * this. Claude supports low/medium/high/xhigh/max/ultracode; Codex supports
-   * none/minimal/low/medium/high/xhigh. Unknown values fall back to `xhigh`.
+   * this. Claude Code persistent settings support low/medium/high/xhigh; the
+   * session-only `/effort max` and `/effort ultracode` commands are accepted
+   * through chat but should not be stored as profile defaults. Codex supports
+   * none/minimal/low/medium/high/xhigh.
    */
   effort?: string;
   /**
@@ -308,8 +310,8 @@ export function normalizeAgentEffort(raw: string): AgentEffort | undefined {
 
 export function getAgentEffort(cfg: AppConfig): AgentEffort {
   const raw = cfg.preferences?.effort;
-  if (typeof raw === 'string') return normalizeAgentEffort(raw) ?? 'xhigh';
-  return 'xhigh';
+  if (typeof raw === 'string') return normalizeAgentEffort(raw) ?? 'high';
+  return 'high';
 }
 
 export function normalizeAgentEffortForAgent(
@@ -332,39 +334,43 @@ export function getAgentEffortForAgent(
   cfg: AppConfig,
   agentKind: AgentKindName,
 ): AgentEffort {
+  const fallback = agentKind === 'codex' ? 'medium' : 'high';
   const raw = cfg.preferences?.effort;
-  if (typeof raw === 'string') return normalizeAgentEffortForAgent(raw, agentKind) ?? 'xhigh';
-  return 'xhigh';
+  if (typeof raw === 'string') return normalizeAgentEffortForAgent(raw, agentKind) ?? fallback;
+  return fallback;
 }
 
 const MODEL_ALIASES: Record<string, string> = {
+  best: 'best',
   fable: 'fable',
   fable5: 'claude-fable-5',
   'fable-5': 'claude-fable-5',
   fable_5: 'claude-fable-5',
   'claude-fable': 'claude-fable-5',
   opus: 'opus',
-  'opus-1m': 'claude-opus-4-8[1m]',
-  opus1m: 'claude-opus-4-8[1m]',
-  'opus-4-8': 'claude-opus-4-8[1m]',
-  'opus-4.8': 'claude-opus-4-8[1m]',
+  'opus[1m]': 'opus[1m]',
+  'opus-1m': 'opus[1m]',
+  opus1m: 'opus[1m]',
+  'opus-4-8': 'claude-opus-4-8',
+  'opus-4.8': 'claude-opus-4-8',
   'opus-4-8-1m': 'claude-opus-4-8[1m]',
   'opus-4.8-1m': 'claude-opus-4-8[1m]',
   opus481m: 'claude-opus-4-8[1m]',
   opus48: 'claude-opus-4-8[1m]',
   'claude-opus': 'opus',
   sonnet: 'sonnet',
+  'sonnet[1m]': 'sonnet[1m]',
   sonnet5: 'claude-sonnet-5',
   'sonnet-5': 'claude-sonnet-5',
-  'sonnet-5-1m': 'claude-sonnet-5',
-  sonnet51m: 'claude-sonnet-5',
+  'sonnet-5-1m': 'sonnet[1m]',
+  sonnet51m: 'sonnet[1m]',
   sonnet46: 'claude-sonnet-4-6',
   'sonnet-4-6': 'claude-sonnet-4-6',
   'sonnet-4.6': 'claude-sonnet-4-6',
   'sonnet-4-6-1m': 'claude-sonnet-4-6[1m]',
   'sonnet-4.6-1m': 'claude-sonnet-4-6[1m]',
-  'sonnet-1m': 'claude-sonnet-4-6[1m]',
-  sonnet1m: 'claude-sonnet-4-6[1m]',
+  'sonnet-1m': 'sonnet[1m]',
+  sonnet1m: 'sonnet[1m]',
   sonnet461m: 'claude-sonnet-4-6[1m]',
   'claude-sonnet': 'sonnet',
   haiku: 'haiku',
@@ -375,9 +381,9 @@ const MODEL_ALIASES: Record<string, string> = {
   '1': '',
   '2': 'opus',
   '3': 'sonnet',
-  '4': 'claude-sonnet-4-6[1m]',
+  '4': 'sonnet[1m]',
   '5': 'haiku',
-  '6': 'claude-opus-4-8[1m]',
+  '6': 'opus[1m]',
   '7': 'fable',
 };
 
