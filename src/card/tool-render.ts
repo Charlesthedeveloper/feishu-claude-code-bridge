@@ -11,6 +11,7 @@ const OUTPUT_MAX = 1200;
  * is the last belt across the whole rendered body string.
  */
 const BODY_TOTAL_MAX = 2500;
+const WORKSPACE_PREFIX = '/Library/Mobile Documents/iCloud~md~obsidian/Documents/Workspace/';
 
 export function toolHeaderText(tool: ToolEntry): string {
   const icon = tool.status === 'done' ? '✅' : tool.status === 'error' ? '❌' : '⏳';
@@ -44,24 +45,26 @@ export function toolBodyMd(tool: ToolEntry): string {
 function summarizeInput(name: string, input: unknown): string {
   if (!input || typeof input !== 'object') return '';
   const rec = input as Record<string, unknown>;
-  const pick = (key: string, max = HEADER_SUMMARY_MAX): string => {
+  const str = (key: string): string => {
     const v = rec[key];
     if (typeof v !== 'string') return '';
-    const oneLine = v.replace(/\s+/g, ' ').trim();
-    return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+    return v;
+  };
+  const pick = (key: string, max = HEADER_SUMMARY_MAX): string => {
+    return truncateOneLine(str(key), max);
   };
   switch (name) {
     case 'Bash':
-      return pick('command');
+      return summarizeCommand(str('command'));
     case 'Read':
     case 'Edit':
     case 'Write':
     case 'NotebookEdit':
-      return shortenPath(pick('file_path'));
+      return shortenPath(str('file_path'));
     case 'Grep': {
       const pat = pick('pattern', 40);
-      const path = pick('path', 30);
-      return path ? `${pat} in ${shortenPath(path)}` : pat;
+      const path = shortenPath(str('path'), 40);
+      return path ? `${pat} in ${path}` : pat;
     }
     case 'Glob':
       return pick('pattern');
@@ -73,7 +76,7 @@ function summarizeInput(name: string, input: unknown): string {
     case 'Task':
       return pick('description') || pick('subagent_type');
     default:
-      return pick('command') || pick('file_path') || pick('path') || pick('query');
+      return summarizeCommand(str('command')) || shortenPath(str('file_path')) || shortenPath(str('path')) || pick('query');
   }
 }
 
@@ -115,8 +118,72 @@ function renderBashOutput(out: string): string {
   return `**Output**\n\`\`\`\n${out}\n\`\`\``;
 }
 
-function shortenPath(p: string): string {
-  return p;
+function shortenPath(p: string, max = HEADER_SUMMARY_MAX): string {
+  return compactPath(p, max);
+}
+
+function summarizeCommand(command: string): string {
+  if (!command) return '';
+  const compacted = compactPathsInCommand(command.replace(/\s+/g, ' ').trim());
+  return middleTruncate(compacted, HEADER_SUMMARY_MAX);
+}
+
+function compactPathsInCommand(command: string): string {
+  const quoted = command.replace(/(["'])(\/Users\/[^"']+)\1/g, (_match, quote: string, path: string) => {
+    return `${quote}${compactPath(path, 52)}${quote}`;
+  });
+  return quoted.replace(/\/Users\/[^\s"'`]+/g, (path) => compactPath(path, 52));
+}
+
+function compactPath(raw: string, max: number): string {
+  if (!raw) return '';
+  let p = raw.trim();
+  const workspaceAt = p.indexOf(WORKSPACE_PREFIX);
+  if (workspaceAt >= 0) {
+    const suffix = p.slice(workspaceAt + WORKSPACE_PREFIX.length);
+    p = suffix ? `Workspace/${suffix}` : 'Workspace';
+  } else {
+    p = p.replace(/^\/Users\/[^/]+\//, '~/');
+  }
+
+  if (p.length <= max) return p;
+  return pathMiddleTruncate(p, max);
+}
+
+function pathMiddleTruncate(path: string, max: number): string {
+  if (path.length <= max) return path;
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length < 3) return middleTruncate(path, max);
+
+  const prefix = path.startsWith('~/') ? '~' : (segments[0] ?? '');
+  if (!prefix) return middleTruncate(path, max);
+  const tail: string[] = [];
+  for (let i = segments.length - 1; i > 0; i -= 1) {
+    const segment = segments[i];
+    if (!segment) continue;
+    tail.unshift(segment);
+    const candidate = `${prefix}/…/${tail.join('/')}`;
+    if (candidate.length > max) {
+      tail.shift();
+      break;
+    }
+  }
+  const candidate = `${prefix}/…/${tail.join('/')}`;
+  if (tail.length > 0 && candidate.length <= max) return candidate;
+  return middleTruncate(path, max);
+}
+
+function truncateOneLine(s: string, max: number): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return middleTruncate(oneLine, max);
+}
+
+function middleTruncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  if (max <= 1) return '…';
+  const left = Math.ceil((max - 1) / 2);
+  const right = Math.floor((max - 1) / 2);
+  return `${s.slice(0, left)}…${s.slice(-right)}`;
 }
 
 function truncate(s: string, max: number): string {

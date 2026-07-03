@@ -8,6 +8,7 @@ import {
   type RunState,
 } from '../../../src/card/run-state.js';
 import { renderText } from '../../../src/card/text-renderer.js';
+import { toolHeaderText } from '../../../src/card/tool-render.js';
 import type { AgentEvent } from '../../../src/agent/types.js';
 import { normalizeCard } from '../../helpers/card-normalize.js';
 
@@ -113,6 +114,30 @@ describe('run card renderer snapshots', () => {
     const text = renderText(state);
     expect(card).toContain(sensitivePath);
     expect(text).toContain(sensitivePath);
+  });
+
+  it('shortens long local paths in tool headers while keeping the target visible', () => {
+    const longPath =
+      '/Users/charlesli/Library/Mobile Documents/iCloud~md~obsidian/Documents/Workspace/05-Public-Investing/01-Companies/META/260701 Meta出租算力（Meta Compute）rumor.md';
+
+    const readHeader = toolHeaderText({
+      id: 'tool-1',
+      name: 'Read',
+      input: { file_path: longPath },
+      status: 'done',
+    });
+    expect(readHeader).toContain('Workspace/…/');
+    expect(readHeader).toContain('260701 Meta出租算力（Meta Compute）rumor.md');
+
+    const bashHeader = toolHeaderText({
+      id: 'tool-2',
+      name: 'Bash',
+      input: { command: `ls -la "${longPath}"` },
+      status: 'done',
+    });
+    expect(bashHeader).not.toContain('/Users/charlesli/Library/Mobile Documents');
+    expect(bashHeader).toContain('Workspace/…/');
+    expect(bashHeader).toContain('Meta Compute');
   });
 });
 
