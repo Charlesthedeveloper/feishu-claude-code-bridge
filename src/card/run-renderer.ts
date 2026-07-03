@@ -45,6 +45,9 @@ export function renderCard(state: RunState, options: RunCardRenderOptions = {}):
   } else if (state.terminal === 'done' && elements.length === 0) {
     elements.push(noteMd('_（未返回内容）_'));
   }
+  if (state.terminal === 'done') {
+    elements.push(noteMd('_✅ 已完成_'));
+  }
 
   if (state.terminal === 'running') {
     if (state.footer) elements.push(footerStatus(state.footer));
