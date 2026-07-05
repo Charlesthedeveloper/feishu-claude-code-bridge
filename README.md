@@ -9,7 +9,7 @@ For a product walkthrough, see the [Feishu document](https://larkcommunity.feish
 ## What it does
 
 - Forwards Feishu / Lark messages to local Claude Code or Codex CLI. Send a DM directly, or `@bot` in a group.
-- **Streaming card**: text replies and tool calls update on one Lark card in real time.
+- **Streaming card**: text replies and tool calls update on one Lark card in real time; long or failed card streams fall back to chunked final markdown so the run still lands with a clear completion marker.
 - **Session continuity**: each chat, topic, or document comment thread keeps its own session.
 - **Queueing and batching**: messages sent in quick succession are handled together; messages sent during a run are queued for the next turn, while commands like `/new`, `/cd`, `/ws use`, and `/stop` can interrupt the current task.
 - **Multiple workspaces**: use `/cd` to switch the current project, and `/ws` to save and reuse common project directories.
@@ -316,7 +316,7 @@ Cloud-doc comments do not need a separate workspace binding or document allowlis
 
 **The bot stays silent or the local CLI never replies.** Usually the local `claude` or `codex` CLI is not logged in, the current session points to a working directory that no longer exists, or the resumed session has grown unstable. Send `/status` to inspect; try `/compact` first if you want to keep context, and `/new` when you want a clean session.
 
-**The agent subprocess looks frozen (card stuck on the last frame).** The bridge supports an idle watchdog: if the agent emits nothing for N minutes, the process is killed and the card is annotated with the auto-termination reason. Disabled by default. Enable with `/config` globally, or `/timeout 10` for the current session; `/timeout off` disables it for the session; `/timeout default` clears the session override.
+**The agent subprocess looks frozen (card stuck on the last frame).** The bridge now treats the interactive card as a live preview, not the only delivery path. If a card update fails or the final answer is long, the agent keeps running and the bridge posts a `完整输出` markdown transcript afterward; the SDK splits that markdown into multiple messages when needed, and terminal states include a visible `✅ 已完成` / error / timeout marker. Separately, the bridge supports an idle watchdog: if the agent emits nothing for N minutes, the process is killed and the card is annotated with the auto-termination reason. Disabled by default. Enable with `/config` globally, or `/timeout 10` for the current session; `/timeout off` disables it for the session; `/timeout default` clears the session override.
 
 **The agent says it cannot see an image I sent.** Upgrade to the latest version. Releases before 0.1.0 had a filename-dedup bug.
 

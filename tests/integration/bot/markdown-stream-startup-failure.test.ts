@@ -94,8 +94,9 @@ describe('markdown stream startup failures', () => {
         path: { message_id: 'om_first', reaction_id: 'reaction_1' },
       }),
     );
-    expect(lastMarkdown(h.channel)).toContain('agent 失败');
-    expect(lastMarkdown(h.channel)).toContain('codex exited with code 1');
+    const markdown = markdownMessages(h.channel).join('\n');
+    expect(markdown).toContain('agent 失败');
+    expect(markdown).toContain('codex exited with code 1');
   });
 
   it('does not wait for the working reaction before draining a failed agent run', async () => {
@@ -111,7 +112,7 @@ describe('markdown stream startup failures', () => {
     await h.channel.handlers.message?.(message('om_second', 'second'));
     await waitFor(() => h.agent.runOptions.length === 2, 1000);
 
-    expect(lastMarkdown(h.channel)).toContain('agent 失败');
+    expect(markdownMessages(h.channel).join('\n')).toContain('agent 失败');
 
     reaction.resolve({ data: { reaction_id: 'reaction_1' } });
     await waitFor(() => h.channel.rawClient.im.v1.messageReaction.delete.mock.calls.length > 0);
@@ -156,9 +157,68 @@ describe('markdown stream startup failures', () => {
       ),
     );
   }, 10_000);
+
+  it('keeps draining the agent and sends a final transcript when card updates fail', async () => {
+    const h = await createHarness({
+      messageReply: 'card',
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          card?: { producer?: (ctrl: { update(card: unknown): Promise<void> }) => Promise<void> };
+        }).card?.producer;
+        if (!producer) throw new Error('expected card producer');
+        await producer({
+          update: vi.fn(async () => {
+            throw new Error('card payload too large');
+          }),
+        });
+      },
+    });
+    h.agent.setEvents([
+      { type: 'text', delta: 'part one' },
+      { type: 'text', delta: ' and part two' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_card', 'long task'));
+    await waitFor(() => markdownMessages(h.channel).some((m) => m.includes('完整输出')));
+
+    const markdown = markdownMessages(h.channel).join('\n');
+    expect(markdown).toContain('实时卡片更新失败');
+    expect(markdown).toContain('part one and part two');
+    expect(markdown).toContain('✅ 已完成');
+  });
+
+  it('sends a final transcript for long card-mode output even when streaming succeeds', async () => {
+    const h = await createHarness({
+      messageReply: 'card',
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          card?: { producer?: (ctrl: { update(card: unknown): Promise<void> }) => Promise<void> };
+        }).card?.producer;
+        if (!producer) throw new Error('expected card producer');
+        await producer({ update: vi.fn(async () => {}) });
+      },
+    });
+    const longAnswer = 'A'.repeat(6500);
+    h.agent.setEvents([
+      { type: 'text', delta: longAnswer },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_long_card', 'long task'));
+    await waitFor(() => markdownMessages(h.channel).some((m) => m.includes('长内容自动分段输出')));
+
+    const markdown = markdownMessages(h.channel).join('\n');
+    expect(markdown).toContain('完整输出');
+    expect(markdown).toContain(longAnswer.slice(0, 200));
+    expect(markdown).toContain('✅ 已完成');
+  });
 });
 
 async function createHarness(options: {
+  messageReply?: 'card' | 'markdown' | 'text';
   reactionCreate?: () => Promise<{ data: { reaction_id: string } }>;
   stream?: StreamFn;
 } = {}): Promise<{
@@ -181,6 +241,7 @@ async function createHarness(options: {
         tenant: 'feishu',
       },
     },
+    preferences: options.messageReply ? { messageReply: options.messageReply } : undefined,
     access: {
       allowedUsers: ['ou_user'],
     },
@@ -355,10 +416,10 @@ function message(messageId: string, content: string): NormalizedMessage {
   } as unknown as NormalizedMessage;
 }
 
-function lastMarkdown(channel: FakeLarkChannel): string {
-  const content = channel.sent.at(-1)?.content as { markdown?: string } | undefined;
-  expect(content?.markdown).toBeTypeOf('string');
-  return content?.markdown ?? '';
+function markdownMessages(channel: FakeLarkChannel): string[] {
+  return channel.sent
+    .map((msg) => (msg.content as { markdown?: string } | undefined)?.markdown)
+    .filter((markdown): markdown is string => typeof markdown === 'string');
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {

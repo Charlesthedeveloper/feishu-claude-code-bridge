@@ -68,6 +68,7 @@ import type { AppPaths } from '../config/app-paths';
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
+const FINAL_TRANSCRIPT_THRESHOLD = 6000;
 
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
@@ -805,10 +806,29 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   try {
     if (replyMode === 'card') {
       let latestState: RunState = initialState;
+      let cardUpdateFailed = false;
+      let cardUpdateFailureCount = 0;
+      let cardDegradedNoticeSent = false;
       let producerStarted = false;
       let cardCtrl:
         | { update(next: object | ((current: object) => object)): Promise<void> }
         | undefined;
+      const noteCardDegraded = async (): Promise<void> => {
+        if (cardDegradedNoticeSent) return;
+        cardDegradedNoticeSent = true;
+        try {
+          await channel.send(
+            chatId,
+            {
+              markdown:
+                '⚠️ 实时卡片更新失败或内容过长。任务会继续执行，完成后我会分段补发完整输出。',
+            },
+            sendOpts,
+          );
+        } catch (err) {
+          log.fail('stream', err, { mode: replyMode, step: 'card-degraded-notice' });
+        }
+      };
       const renderDone = processAgentStream(
         handle,
         eventStream,
@@ -819,7 +839,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         async (state) => {
           latestState = state;
           if (cardCtrl) {
-            await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+            if (cardUpdateFailed) return;
+            try {
+              await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+            } catch (err) {
+              cardUpdateFailed = true;
+              cardUpdateFailureCount += 1;
+              log.fail('stream', err, {
+                mode: replyMode,
+                step: 'card-update',
+                failures: cardUpdateFailureCount,
+              });
+              await noteCardDegraded();
+            }
           }
         },
       );
@@ -831,28 +863,52 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             producer: async (ctrl) => {
               producerStarted = true;
               cardCtrl = ctrl;
-              await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
+              try {
+                await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
+              } catch (err) {
+                cardUpdateFailed = true;
+                cardUpdateFailureCount += 1;
+                log.fail('stream', err, {
+                  mode: replyMode,
+                  step: 'card-initial-update',
+                  failures: cardUpdateFailureCount,
+                });
+                await noteCardDegraded();
+              }
               await renderDone;
             },
           },
         },
         sendOpts,
       );
-      await awaitRenderAwareStream({
+      const streamOutcome = await awaitRenderAwareStream({
         mode: replyMode,
         streamDone,
         renderDone,
         producerStarted: () => producerStarted,
         fallback: async (state) => {
-          await channel.send(
-            chatId,
-            { card: renderCard(filterForPrefs(state), cardRenderOptions) },
-            sendOpts,
-          );
+          await sendFinalTranscript(channel, chatId, state, sendOpts, '流式卡片启动失败，补发完整输出');
         },
       });
+      const finalState = filterForPrefs(latestState);
+      if (
+        !streamOutcome.fallbackSent &&
+        shouldSendFinalTranscript(finalState, cardUpdateFailed || streamOutcome.terminalGraceExpired)
+      ) {
+        await sendFinalTranscript(
+          channel,
+          chatId,
+          finalState,
+          sendOpts,
+          cardUpdateFailed || streamOutcome.terminalGraceExpired
+            ? '流式卡片异常，补发完整输出'
+            : '长内容自动分段输出',
+        );
+      }
     } else if (replyMode === 'markdown') {
       let latestState: RunState = initialState;
+      let markdownUpdateFailed = false;
+      let markdownUpdateFailureCount = 0;
       let producerStarted = false;
       let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
       const renderDone = processAgentStream(
@@ -865,7 +921,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         async (state) => {
           latestState = state;
           if (markdownCtrl) {
-            await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+            if (markdownUpdateFailed) return;
+            try {
+              await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+            } catch (err) {
+              markdownUpdateFailed = true;
+              markdownUpdateFailureCount += 1;
+              log.fail('stream', err, {
+                mode: replyMode,
+                step: 'markdown-update',
+                failures: markdownUpdateFailureCount,
+              });
+            }
           }
         },
       );
@@ -875,13 +942,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           markdown: async (ctrl) => {
             producerStarted = true;
             markdownCtrl = ctrl;
-            await ctrl.setContent(renderText(filterForPrefs(latestState)));
+            try {
+              await ctrl.setContent(renderText(filterForPrefs(latestState)));
+            } catch (err) {
+              markdownUpdateFailed = true;
+              markdownUpdateFailureCount += 1;
+              log.fail('stream', err, {
+                mode: replyMode,
+                step: 'markdown-initial-update',
+                failures: markdownUpdateFailureCount,
+              });
+            }
             await renderDone;
           },
         },
         sendOpts,
       );
-      await awaitRenderAwareStream({
+      const streamOutcome = await awaitRenderAwareStream({
         mode: replyMode,
         streamDone,
         renderDone,
@@ -893,6 +970,15 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
       });
+      if (
+        !streamOutcome.fallbackSent &&
+        (markdownUpdateFailed || streamOutcome.terminalGraceExpired)
+      ) {
+        const body = renderText(filterForPrefs(latestState));
+        if (body.trim()) {
+          await channel.send(chatId, { markdown: body }, sendOpts);
+        }
+      }
     } else {
       // text mode: drain the agent stream without sending anything during
       // the run, then post the final rendered text once as a plain markdown
@@ -1065,7 +1151,10 @@ async function awaitRenderAwareStream(input: {
   renderDone: Promise<RunState>;
   producerStarted: () => boolean;
   fallback: (state: RunState) => Promise<void>;
-}): Promise<void> {
+}): Promise<{
+  fallbackSent: boolean;
+  terminalGraceExpired: boolean;
+}> {
   const streamResult = input.streamDone.then(
     () => ({ kind: 'stream' as const, ok: true as const }),
     (err) => ({ kind: 'stream' as const, ok: false as const, err }),
@@ -1081,7 +1170,7 @@ async function awaitRenderAwareStream(input: {
       const rendered = await renderResult;
       if (!rendered.ok) throw rendered.err;
       await runFallbackReply(input.mode, rendered.state, input.fallback);
-      return;
+      return { fallbackSent: true, terminalGraceExpired: false };
     }
     throw first.err;
   }
@@ -1089,13 +1178,13 @@ async function awaitRenderAwareStream(input: {
   if (first.kind === 'stream') {
     const rendered = await renderResult;
     if (!rendered.ok) throw rendered.err;
-    return;
+    return { fallbackSent: false, terminalGraceExpired: false };
   }
 
   if (!input.producerStarted()) {
     log.warn('stream', 'producer-not-started-before-agent-terminal', { mode: input.mode });
     await runFallbackReply(input.mode, first.state, input.fallback);
-    return;
+    return { fallbackSent: true, terminalGraceExpired: false };
   }
 
   const terminal = await Promise.race([
@@ -1112,9 +1201,10 @@ async function awaitRenderAwareStream(input: {
         log.fail('stream', result.err, { mode: input.mode, step: 'stream-terminal-late' });
       }
     });
-    return;
+    return { fallbackSent: false, terminalGraceExpired: true };
   }
   if (!terminal.ok) throw terminal.err;
+  return { fallbackSent: false, terminalGraceExpired: false };
 }
 
 async function runFallbackReply(
@@ -1165,6 +1255,30 @@ function scheduleWorkingReactionCleanup(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldSendFinalTranscript(state: RunState, forced: boolean): boolean {
+  if (state.terminal === 'running') return false;
+  if (forced) return true;
+  return renderText(state).length > FINAL_TRANSCRIPT_THRESHOLD;
+}
+
+async function sendFinalTranscript(
+  channel: LarkChannel,
+  chatId: string,
+  state: RunState,
+  sendOpts: Parameters<LarkChannel['send']>[2],
+  reason: string,
+): Promise<void> {
+  const body = renderText(state);
+  if (!body.trim()) return;
+  await channel.send(
+    chatId,
+    {
+      markdown: `**完整输出**\n\n_${reason}_\n\n${body}`,
+    },
+    sendOpts,
+  );
 }
 
 function buildPrompt(
