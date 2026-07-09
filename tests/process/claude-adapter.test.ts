@@ -43,6 +43,7 @@ describe('ClaudeAdapter process contract', () => {
 
     expect(await realpath(record.cwd)).toBe(await realpath(fake.dir));
     expect(record.env.LARK_CHANNEL).toBe('1');
+    expect(record.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe('0');
     expect(record.argv.slice(0, 8)).toEqual([
       '-p',
       'hello',
@@ -284,6 +285,7 @@ async function createFakeClaude(options: {
       '    LARK_CHANNEL_HOME: process.env.LARK_CHANNEL_HOME,',
       '    LARK_CHANNEL_CONFIG: process.env.LARK_CHANNEL_CONFIG,',
       '    LARKSUITE_CLI_CONFIG_DIR: process.env.LARKSUITE_CLI_CONFIG_DIR,',
+      '    CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: process.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS,',
       '  },',
       '}));',
       `const lines = ${JSON.stringify(options.lines)};`,
@@ -306,6 +308,7 @@ async function readRecord(path: string): Promise<{
     LARK_CHANNEL_HOME?: string;
     LARK_CHANNEL_CONFIG?: string;
     LARKSUITE_CLI_CONFIG_DIR?: string;
+    CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS?: string;
   };
 }> {
   return JSON.parse(await readFile(path, 'utf8')) as {
@@ -317,6 +320,7 @@ async function readRecord(path: string): Promise<{
       LARK_CHANNEL_HOME?: string;
       LARK_CHANNEL_CONFIG?: string;
       LARKSUITE_CLI_CONFIG_DIR?: string;
+      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS?: string;
     };
   };
 }

@@ -27,6 +27,8 @@ export interface ClaudeAdapterOptions {
 
 type ClaudeChild = SpawnedProcessByStdio<null, Readable, Readable>;
 
+const CLAUDE_CODE_BG_WAIT_ENV = 'CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS';
+
 export class ClaudeAdapter implements AgentAdapter {
   readonly id = 'claude';
   readonly displayName = 'Claude Code';
@@ -118,9 +120,17 @@ export class ClaudeAdapter implements AgentAdapter {
       args.push('--allowed-tools', `mcp__gui__${tool}`);
     }
 
+    const env = mergeProcessEnv(process.env, {
+      // Claude Code's print mode can terminate still-running background
+      // tasks after 600s. Bridge runs should wait for those tasks and let the
+      // bridge idle watchdog decide whether to stop the process.
+      [CLAUDE_CODE_BG_WAIT_ENV]: process.env[CLAUDE_CODE_BG_WAIT_ENV] ?? '0',
+      ...buildLarkChannelEnv(this.larkChannel),
+    });
+
     const child = spawnProcess(this.binary, args, {
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     }) as ClaudeChild;
 

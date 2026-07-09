@@ -69,6 +69,7 @@ const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
 const FINAL_TRANSCRIPT_THRESHOLD = 6000;
+const DEFAULT_FALLBACK_SEND_RETRY_DELAYS_MS = [1000, 3000, 8000, 15000];
 
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
@@ -966,17 +967,20 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         fallback: async (state) => {
           const body = renderText(filterForPrefs(state));
           if (body.trim()) {
-            await channel.send(chatId, { markdown: body }, sendOpts);
+            await sendMarkdownWithRetry(channel, chatId, body, sendOpts, {
+              mode: replyMode,
+              step: 'markdown-startup-fallback',
+            });
           }
         },
       });
-      if (
-        !streamOutcome.fallbackSent &&
-        (markdownUpdateFailed || streamOutcome.terminalGraceExpired)
-      ) {
+      if (!streamOutcome.fallbackSent && markdownUpdateFailed) {
         const body = renderText(filterForPrefs(latestState));
         if (body.trim()) {
-          await channel.send(chatId, { markdown: body }, sendOpts);
+          await sendMarkdownWithRetry(channel, chatId, body, sendOpts, {
+            mode: replyMode,
+            step: 'markdown-update-fallback',
+          });
         }
       }
     } else {
@@ -994,7 +998,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       );
       const body = renderText(filterForPrefs(finalState));
       if (body.trim()) {
-        await channel.send(chatId, { markdown: body }, sendOpts);
+        await sendMarkdownWithRetry(channel, chatId, body, sendOpts, {
+          mode: replyMode,
+          step: 'text-final',
+        });
       }
     }
   } catch (err) {
@@ -1272,13 +1279,76 @@ async function sendFinalTranscript(
 ): Promise<void> {
   const body = renderText(state);
   if (!body.trim()) return;
-  await channel.send(
+  await sendMarkdownWithRetry(
+    channel,
     chatId,
-    {
-      markdown: `**完整输出**\n\n_${reason}_\n\n${body}`,
-    },
+    `**完整输出**\n\n_${reason}_\n\n${body}`,
     sendOpts,
+    {
+      mode: 'card',
+      step: 'final-transcript',
+    },
   );
+}
+
+async function sendMarkdownWithRetry(
+  channel: LarkChannel,
+  chatId: string,
+  markdown: string,
+  sendOpts: Parameters<LarkChannel['send']>[2],
+  context: { mode: 'card' | 'markdown' | 'text'; step: string },
+): Promise<void> {
+  const delays = fallbackSendRetryDelays();
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await channel.send(chatId, { markdown }, sendOpts);
+      if (attempt > 0) {
+        log.info('stream', 'fallback-send-recovered', {
+          ...context,
+          attempts: attempt + 1,
+        });
+      }
+      return;
+    } catch (err) {
+      if (attempt >= delays.length || !isLikelyTransientSendError(err)) {
+        throw err;
+      }
+      const retryInMs = delays[attempt]!;
+      log.warn('stream', 'fallback-send-retry', {
+        ...context,
+        attempt: attempt + 1,
+        retryInMs,
+        err: errorSummary(err),
+      });
+      await delay(retryInMs);
+    }
+  }
+}
+
+function fallbackSendRetryDelays(): number[] {
+  const raw = process.env.LARK_CHANNEL_FALLBACK_SEND_RETRY_DELAYS_MS;
+  if (!raw) return DEFAULT_FALLBACK_SEND_RETRY_DELAYS_MS;
+  const parsed = raw
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+  return parsed.length > 0 ? parsed : DEFAULT_FALLBACK_SEND_RETRY_DELAYS_MS;
+}
+
+function isLikelyTransientSendError(err: unknown): boolean {
+  const summary = errorSummary(err);
+  return /\b(ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNABORTED|EADDRNOTAVAIL|ECONNREFUSED)\b/i.test(
+    summary,
+  ) || /timeout|temporarily|rate limit|socket|TLS|handshake|5\d\d/i.test(summary);
+}
+
+function errorSummary(err: unknown): string {
+  if (err instanceof Error) {
+    const maybeCode = (err as Error & { code?: unknown }).code;
+    const code = typeof maybeCode === 'string' ? ` ${maybeCode}` : '';
+    return `${err.name}${code}: ${err.message}`;
+  }
+  return String(err);
 }
 
 function buildPrompt(

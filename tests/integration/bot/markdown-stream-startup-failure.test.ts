@@ -73,6 +73,7 @@ const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  delete process.env.LARK_CHANNEL_FALLBACK_SEND_RETRY_DELAYS_MS;
   sdkMock.channel = undefined;
   sdkMock.createLarkChannel.mockClear();
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
@@ -158,6 +159,41 @@ describe('markdown stream startup failures', () => {
     );
   }, 10_000);
 
+  it('does not post a duplicate markdown fallback when stream updates succeeded', async () => {
+    const streamDone = deferred<void>();
+    const streamed: string[] = [];
+    const h = await createHarness({
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (producer) {
+          void producer({
+            setContent: vi.fn(async (markdown: string) => {
+              streamed.push(markdown);
+            }),
+          });
+        }
+        await streamDone.promise;
+      },
+    });
+    h.agent.setEvents([
+      { type: 'text', delta: 'single streamed output' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_no_duplicate', 'task'));
+    await waitFor(
+      () => h.channel.rawClient.im.v1.messageReaction.delete.mock.calls.length > 0,
+      4500,
+    );
+
+    expect(streamed.join('\n')).toContain('single streamed output');
+    expect(markdownMessages(h.channel)).toEqual([]);
+    streamDone.resolve();
+  }, 10_000);
+
   it('keeps draining the agent and sends a final transcript when card updates fail', async () => {
     const h = await createHarness({
       messageReply: 'card',
@@ -215,11 +251,40 @@ describe('markdown stream startup failures', () => {
     expect(markdown).toContain(longAnswer.slice(0, 200));
     expect(markdown).toContain('✅ 已完成');
   });
+
+  it('retries transient send failures when posting a markdown fallback', async () => {
+    process.env.LARK_CHANNEL_FALLBACK_SEND_RETRY_DELAYS_MS = '1,1';
+    const transient = Object.assign(new Error('getaddrinfo ENOTFOUND open.feishu.cn'), {
+      code: 'ENOTFOUND',
+    });
+    const h = await createHarness({
+      messageReply: 'markdown',
+      sendFailures: [transient],
+      stream: async () => {
+        throw transient;
+      },
+    });
+    h.agent.setEvents([
+      { type: 'text', delta: 'network recovered output' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_retry', 'task'));
+    await waitFor(() =>
+      markdownMessages(h.channel).some((m) => m.includes('network recovered output')),
+    );
+
+    const markdown = markdownMessages(h.channel).join('\n');
+    expect(markdown).toContain('network recovered output');
+    expect(markdown).toContain('✅ 已完成');
+  });
 });
 
 async function createHarness(options: {
   messageReply?: 'card' | 'markdown' | 'text';
   reactionCreate?: () => Promise<{ data: { reaction_id: string } }>;
+  sendFailures?: unknown[];
   stream?: StreamFn;
 } = {}): Promise<{
   tmp: TmpProfile;
@@ -309,6 +374,7 @@ async function startTestBridge(h: {
 
 function createFakeLarkChannel(options: {
   reactionCreate?: () => Promise<{ data: { reaction_id: string } }>;
+  sendFailures?: unknown[];
   stream?: StreamFn;
 } = {}): FakeLarkChannel {
   const handlers: MessageHandlerMap = {};
@@ -351,8 +417,10 @@ function createFakeLarkChannel(options: {
     getConnectionStatus() {
       return { state: 'connected', reconnectAttempts: 0 };
     },
-    async send(chatId, content, options) {
-      sent.push({ chatId, content, options });
+    async send(chatId, content, sendOptions) {
+      const failure = options.sendFailures?.shift();
+      if (failure) throw failure;
+      sent.push({ chatId, content, options: sendOptions });
     },
     stream: options.stream ?? (async () => {
       await new Promise<void>(() => {});
