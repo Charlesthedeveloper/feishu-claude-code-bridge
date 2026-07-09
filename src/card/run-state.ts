@@ -35,10 +35,32 @@ export const initialState: RunState = {
   terminal: 'running',
 };
 
+const AGENT_TEXT_FAILURE_PATTERNS = [
+  /^Error during compaction:/i,
+  /^API Error:/i,
+  /^Failed to authenticate\./i,
+  /^Not logged in\b/i,
+  /^There's an issue with the selected model\b/i,
+  /^Unable to connect to API\b/i,
+  /^Request not allowed\b/i,
+];
+
 function closeStreamingText(blocks: Block[]): Block[] {
   return blocks.map((b) =>
     b.kind === 'text' && b.streaming ? { ...b, streaming: false } : b,
   );
+}
+
+function detectedAgentTextFailure(state: RunState): string | undefined {
+  const textBlock = [...state.blocks]
+    .reverse()
+    .find((block): block is Extract<Block, { kind: 'text' }> =>
+      block.kind === 'text' && block.content.trim().length > 0,
+    );
+  const text = textBlock?.content.trim();
+  if (!text) return undefined;
+  if (!AGENT_TEXT_FAILURE_PATTERNS.some((pattern) => pattern.test(text))) return undefined;
+  return text.split('\n')[0]!.slice(0, 500);
 }
 
 export function reduce(state: RunState, evt: AgentEvent): RunState {
@@ -116,6 +138,19 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
     }
 
     case 'done': {
+      if (evt.terminationReason === 'normal') {
+        const textFailure = detectedAgentTextFailure(state);
+        if (textFailure) {
+          return {
+            ...state,
+            blocks: closeStreamingText(state.blocks),
+            reasoning: { ...state.reasoning, active: false },
+            terminal: 'error',
+            errorMsg: textFailure,
+            footer: null,
+          };
+        }
+      }
       const terminal =
         evt.terminationReason === 'interrupted'
           ? 'interrupted'

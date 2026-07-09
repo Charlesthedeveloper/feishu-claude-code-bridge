@@ -35,6 +35,7 @@ export function renderCard(state: RunState, options: RunCardRenderOptions = {}):
     }
   }
 
+  const hasBody = hasVisibleBody(state);
   if (state.terminal === 'interrupted') {
     elements.push(noteMd('_⏹ 已被中断_'));
   } else if (state.terminal === 'idle_timeout') {
@@ -42,11 +43,10 @@ export function renderCard(state: RunState, options: RunCardRenderOptions = {}):
     elements.push(noteMd(`_⏱ ${mins} 分钟无响应,已自动终止_`));
   } else if (state.terminal === 'error' && state.errorMsg) {
     elements.push(noteMd(`⚠️ agent 失败：${state.errorMsg}`));
-  } else if (state.terminal === 'done' && elements.length === 0) {
-    elements.push(noteMd('_（未返回内容）_'));
-  }
-  if (state.terminal === 'done') {
-    elements.push(noteMd('_✅ 已完成_'));
+  } else if (state.terminal === 'done') {
+    elements.push(
+      noteMd(hasBody ? '_✅ 已完成_' : '⚠️ 已结束，但 agent 没有返回正文或工具操作。'),
+    );
   }
 
   if (state.terminal === 'running') {
@@ -208,10 +208,18 @@ function summaryText(state: RunState): string {
   if (state.terminal === 'interrupted') return '已中断';
   if (state.terminal === 'idle_timeout') return '已超时';
   if (state.terminal === 'error') return '出错';
-  if (state.terminal === 'done') return '已完成';
+  if (state.terminal === 'done') return hasVisibleBody(state) ? '已完成' : '无正文';
   if (state.footer === 'tool_running') return '正在调用工具';
   if (state.footer === 'streaming') return '正在输出';
   return '思考中';
+}
+
+function hasVisibleBody(state: RunState): boolean {
+  if (state.reasoning.content.trim().length > 0) return true;
+  return state.blocks.some((block) => {
+    if (block.kind === 'tool') return true;
+    return block.content.trim().length > 0;
+  });
 }
 
 function truncate(s: string, max: number): string {

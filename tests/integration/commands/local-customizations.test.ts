@@ -185,6 +185,28 @@ describe('local bridge customizations', () => {
     expect(h.sessions.resumeFor('chat-1', cwd)).toBe('session-existing');
     expect(JSON.stringify(h.channel.streams.at(-1)?.cardUpdates)).toContain('compacted');
   });
+
+  it('surfaces Claude compact text failures as failed cards', async () => {
+    const h = await createHarness();
+    const cwd = await realpath(h.tmp.workspace);
+    h.sessions.set('chat-1', 'session-existing', cwd);
+    h.agent.setEvents([
+      { type: 'system', sessionId: 'session-existing', cwd },
+      {
+        type: 'text',
+        delta:
+          'Error during compaction: API Error: Connection closed mid-response. The response above may be incomplete.',
+      },
+      { type: 'done', sessionId: 'session-existing', terminationReason: 'normal' },
+    ]);
+
+    await expect(h.run('/compact keep market notes')).resolves.toBe(true);
+
+    const rendered = JSON.stringify(h.channel.streams.at(-1)?.cardUpdates.at(-1));
+    expect(rendered).toContain('出错');
+    expect(rendered).toContain('agent 失败');
+    expect(rendered).not.toContain('已完成');
+  });
 });
 
 async function createHarness(agentKind: AgentKind = 'claude'): Promise<Harness> {

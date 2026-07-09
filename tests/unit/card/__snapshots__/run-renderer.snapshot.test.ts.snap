@@ -285,12 +285,7 @@ exports[`run card renderer snapshots > renders done, error, interrupted, and idl
   "body": {
     "elements": [
       {
-        "content": "_（未返回内容）_",
-        "tag": "markdown",
-        "text_size": "notation",
-      },
-      {
-        "content": "_✅ 已完成_",
+        "content": "⚠️ 已结束，但 agent 没有返回正文或工具操作。",
         "tag": "markdown",
         "text_size": "notation",
       },
@@ -299,7 +294,7 @@ exports[`run card renderer snapshots > renders done, error, interrupted, and idl
   "config": {
     "streaming_mode": false,
     "summary": {
-      "content": "已完成",
+      "content": "无正文",
     },
   },
   "schema": "2.0",

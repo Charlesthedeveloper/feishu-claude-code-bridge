@@ -37,4 +37,17 @@ describe('run state terminal event schema', () => {
       }).terminal,
     ).toBe('idle_timeout');
   });
+
+  it('treats known Claude Code error text as a failed terminal state', () => {
+    const withErrorText = reduce(initialState, {
+      type: 'text',
+      delta:
+        'Error during compaction: API Error: Connection closed mid-response. The response above may be incomplete.',
+    });
+
+    const final = reduce(withErrorText, { type: 'done', terminationReason: 'normal' });
+
+    expect(final.terminal).toBe('error');
+    expect(final.errorMsg).toContain('Error during compaction');
+  });
 });
