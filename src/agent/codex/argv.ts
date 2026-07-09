@@ -18,6 +18,7 @@ const CODEX_REASONING_EFFORTS = new Set([
   'medium',
   'high',
   'xhigh',
+  'max',
 ]);
 
 export function buildCodexArgs(input: BuildCodexArgsInput): string[] {
@@ -74,9 +75,8 @@ export function buildCodexArgs(input: BuildCodexArgsInput): string[] {
 function normalizeCodexReasoningEffort(effort: string | undefined): string | undefined {
   const normalized = effort?.trim().toLowerCase();
   if (!normalized) return undefined;
-  const mapped = normalized === 'max' ? 'xhigh' : normalized;
-  if (!CODEX_REASONING_EFFORTS.has(mapped)) {
+  if (!CODEX_REASONING_EFFORTS.has(normalized)) {
     throw new Error(`unsupported Codex reasoning effort: ${effort}`);
   }
-  return mapped;
+  return normalized;
 }

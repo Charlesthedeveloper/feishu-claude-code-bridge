@@ -312,13 +312,16 @@ function isAbsoluteOrTilde(p: string): boolean {
 
 function effortUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
-    ? '用法：`/effort [none|minimal|low|medium|high|xhigh|default]` 或 `/new [none|minimal|low|medium|high|xhigh]`'
+    ? '用法：`/effort [none|minimal|low|medium|high|xhigh|max|default]` 或 `/new [none|minimal|low|medium|high|xhigh|max]`'
     : '用法：`/effort [low|medium|high|xhigh|max|ultracode|auto|default]` 或 `/new [low|medium|high|xhigh|max|ultracode|auto]`';
 }
 
 function modelUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
-    ? '用法：`/model [default|<codex-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。例如 `/model gpt-5.5`'
+    ? [
+        '用法：`/model [default|<codex-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
+        'GPT-5.6：`/model gpt-5.6`（Sol alias）、`/model terra`、`/model luna`。当前为受邀组织 preview，账号需有 Codex entitlement。',
+      ].join('\n')
     : [
         '用法：`/model [default|best|opus|opus[1m]|sonnet|sonnet[1m]|sonnet5|haiku|fable|fable5|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
         '常用：`/model sonnet`、`/model sonnet5`、`/model fable`、`/model fable5`、`/model opus[1m]`、`/model best`。',
@@ -344,7 +347,7 @@ function formatEffort(effort: AgentEffort): string {
     case 'xhigh':
       return '`xhigh`（extra high）';
     case 'max':
-      return '`max`（Claude Code session-only 最高档；Codex 会映射到 xhigh）';
+      return '`max`（最高 reasoning；需当前模型支持）';
     case 'ultracode':
       return '`ultracode`（Claude Code session-only：发送 xhigh + dynamic workflows）';
   }
@@ -361,7 +364,21 @@ function modelAliasNote(raw: string, model: string): string {
 }
 
 function modelDetail(model: string | undefined, agentKind: AgentKind): string | undefined {
-  if (!model || agentKind !== 'claude') return undefined;
+  if (!model) return undefined;
+  if (agentKind === 'codex') {
+    switch (model) {
+      case 'gpt-5.6':
+        return 'GPT-5.6 Sol 的官方 alias；最强档，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+      case 'gpt-5.6-sol':
+        return 'GPT-5.6 Sol；复杂推理与 coding，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+      case 'gpt-5.6-terra':
+        return 'GPT-5.6 Terra；平衡智能与成本，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+      case 'gpt-5.6-luna':
+        return 'GPT-5.6 Luna；低成本高吞吐，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+      default:
+        return undefined;
+    }
+  }
   switch (model) {
     case 'best':
       return 'Claude Code best alias；优先用当前账号可用的最强模型，Fable 5 不可用时回退。';
@@ -872,7 +889,7 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
             '用法：',
             '- `/effort none` 或 `/effort minimal` 当前 session 使用 Codex 原生低 reasoning',
             '- `/effort low|medium|high|xhigh` 当前 session 设置 Codex reasoning effort',
-            '- `/effort max` 兼容旧命令，会映射为 Codex 的 `xhigh`',
+            '- `/effort max` 当前 session 使用原生最高 reasoning（GPT-5.6 支持）',
             '- `/effort default` 清除 session 覆盖，回退全局',
             '- `/new minimal` 新会话并同时设低 effort',
           ].join('\n')
@@ -916,7 +933,7 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
   if (!effort) {
     const aliasText =
       agentKind === 'codex'
-        ? '\n\nCodex 原生支持：`none|minimal|low|medium|high|xhigh`；兼容别名：`max`/`ultra` → `xhigh`'
+        ? '\n\nCodex 支持：`none|minimal|low|medium|high|xhigh|max`；其中 `max` 需要 GPT-5.6 等支持该档位的模型。'
         : '\n\nClaude Code 支持：`low|medium|high|xhigh|max`；`ultracode` 是 session-only 工作流模式；`auto`/`default` 清除当前 chat 覆盖。';
     await reply(ctx, `❌ ${effortUsage(agentKind)}${aliasText}`);
     return;

@@ -137,13 +137,17 @@ describe('local bridge customizations', () => {
     expect(lastMarkdown(h.channel)).toContain('minimal');
 
     await expect(h.run('/effort max')).resolves.toBe(true);
-    expect(h.sessions.getEffort('chat-1')).toBe('xhigh');
-    expect(lastMarkdown(h.channel)).toContain('xhigh');
+    expect(h.sessions.getEffort('chat-1')).toBe('max');
+    expect(lastMarkdown(h.channel)).toContain('max');
 
     await expect(h.run('/model gpt-5.5')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('gpt-5.5');
     expect(h.controls.cfg.preferences?.model).toBeUndefined();
     expect(lastMarkdown(h.channel)).toContain('当前 session Codex model 已设为 `gpt-5.5`');
+
+    await expect(h.run('/model terra')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('gpt-5.6-terra');
+    expect(lastMarkdown(h.channel)).toContain('GPT-5.6 Terra');
 
     await expect(h.run('/model fable')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('fable');

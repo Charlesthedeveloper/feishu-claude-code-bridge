@@ -152,8 +152,8 @@ export interface AppPreferences {
    * Default reasoning effort for agent runs. Per-scope `/effort` overrides
    * this. Claude Code persistent settings support low/medium/high/xhigh; the
    * session-only `/effort max` and `/effort ultracode` commands are accepted
-   * through chat but should not be stored as profile defaults. Codex supports
-   * none/minimal/low/medium/high/xhigh.
+   * through chat but should not be stored as Claude profile defaults. Codex
+   * supports none/minimal/low/medium/high/xhigh, plus max on GPT-5.6 models.
    */
   effort?: string;
   /**
@@ -322,7 +322,7 @@ export function normalizeAgentEffortForAgent(
   if (!effort) return undefined;
   if (agentKind === 'codex') {
     if (effort === 'ultracode') return undefined;
-    return effort === 'max' ? 'xhigh' : effort;
+    return effort;
   }
   if (effort === 'none' || effort === 'minimal') {
     return undefined;
@@ -387,6 +387,24 @@ const MODEL_ALIASES: Record<string, string> = {
   '7': 'fable',
 };
 
+const CODEX_MODEL_ALIASES: Record<string, string> = {
+  '5.6': 'gpt-5.6',
+  'gpt5.6': 'gpt-5.6',
+  'gpt56': 'gpt-5.6',
+  sol: 'gpt-5.6-sol',
+  '5.6-sol': 'gpt-5.6-sol',
+  'gpt5.6-sol': 'gpt-5.6-sol',
+  'gpt56sol': 'gpt-5.6-sol',
+  terra: 'gpt-5.6-terra',
+  '5.6-terra': 'gpt-5.6-terra',
+  'gpt5.6-terra': 'gpt-5.6-terra',
+  'gpt56terra': 'gpt-5.6-terra',
+  luna: 'gpt-5.6-luna',
+  '5.6-luna': 'gpt-5.6-luna',
+  'gpt5.6-luna': 'gpt-5.6-luna',
+  'gpt56luna': 'gpt-5.6-luna',
+};
+
 export function normalizeAgentModel(raw: string): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
@@ -400,7 +418,13 @@ export function normalizeAgentModelForAgent(
 ): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  return agentKind === 'claude' ? normalizeAgentModel(trimmed) : trimmed;
+  if (agentKind === 'claude') return normalizeAgentModel(trimmed);
+  const normalized = trimmed.toLowerCase().replace(/[\s_]+/g, '-');
+  return (
+    CODEX_MODEL_ALIASES[normalized] ??
+    CODEX_MODEL_ALIASES[normalized.replace(/[-.]/g, '')] ??
+    trimmed
+  );
 }
 
 export function getAgentModel(cfg: AppConfig): string | undefined {

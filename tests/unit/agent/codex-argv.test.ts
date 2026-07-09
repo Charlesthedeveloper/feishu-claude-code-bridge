@@ -147,14 +147,14 @@ describe('Codex argv contract', () => {
     ]);
   });
 
-  it('maps the bridge max compatibility effort to Codex xhigh', () => {
+  it('passes native Codex max effort through for GPT-5.6 models', () => {
     expect(
       buildCodexArgs({
         cwd: '/repo',
         sandbox: 'read-only',
         effort: 'max',
       }),
-    ).toContain('model_reasoning_effort="xhigh"');
+    ).toContain('model_reasoning_effort="max"');
   });
 
   it('rejects unsupported Codex reasoning efforts before spawning', () => {
