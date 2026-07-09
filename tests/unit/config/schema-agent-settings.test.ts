@@ -10,8 +10,9 @@ describe('agent-specific settings', () => {
   });
 
   it.each([
-    ['5.6', 'gpt-5.6'],
-    ['gpt5.6', 'gpt-5.6'],
+    ['5.6', 'gpt-5.6-sol'],
+    ['gpt-5.6', 'gpt-5.6-sol'],
+    ['gpt5.6', 'gpt-5.6-sol'],
     ['sol', 'gpt-5.6-sol'],
     ['terra', 'gpt-5.6-terra'],
     ['luna', 'gpt-5.6-luna'],

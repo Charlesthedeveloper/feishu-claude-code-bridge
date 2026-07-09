@@ -388,9 +388,10 @@ const MODEL_ALIASES: Record<string, string> = {
 };
 
 const CODEX_MODEL_ALIASES: Record<string, string> = {
-  '5.6': 'gpt-5.6',
-  'gpt5.6': 'gpt-5.6',
-  'gpt56': 'gpt-5.6',
+  '5.6': 'gpt-5.6-sol',
+  'gpt-5.6': 'gpt-5.6-sol',
+  'gpt5.6': 'gpt-5.6-sol',
+  'gpt56': 'gpt-5.6-sol',
   sol: 'gpt-5.6-sol',
   '5.6-sol': 'gpt-5.6-sol',
   'gpt5.6-sol': 'gpt-5.6-sol',

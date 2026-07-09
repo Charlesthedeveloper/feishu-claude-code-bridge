@@ -320,7 +320,7 @@ function modelUsage(agentKind: AgentKind): string {
   return agentKind === 'codex'
     ? [
         '用法：`/model [default|<codex-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
-        'GPT-5.6：`/model gpt-5.6`（Sol alias）、`/model terra`、`/model luna`。当前为受邀组织 preview，账号需有 Codex entitlement。',
+        'GPT-5.6：`/model gpt-5.6` 或 `/model sol`（均使用完整 `gpt-5.6-sol`）、`/model terra`、`/model luna`。',
       ].join('\n')
     : [
         '用法：`/model [default|best|opus|opus[1m]|sonnet|sonnet[1m]|sonnet5|haiku|fable|fable5|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
@@ -368,13 +368,13 @@ function modelDetail(model: string | undefined, agentKind: AgentKind): string | 
   if (agentKind === 'codex') {
     switch (model) {
       case 'gpt-5.6':
-        return 'GPT-5.6 Sol 的官方 alias；最强档，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+        return 'GPT-5.6 Sol alias；bridge 会在新设置中规范化为完整 `gpt-5.6-sol`，兼容 ChatGPT 订阅的 Codex backend。';
       case 'gpt-5.6-sol':
-        return 'GPT-5.6 Sol；复杂推理与 coding，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+        return 'GPT-5.6 Sol；复杂推理与 coding，支持 none 到 max effort。';
       case 'gpt-5.6-terra':
-        return 'GPT-5.6 Terra；平衡智能与成本，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+        return 'GPT-5.6 Terra；平衡智能与成本，支持 none 到 max effort。';
       case 'gpt-5.6-luna':
-        return 'GPT-5.6 Luna；低成本高吞吐，支持 none 到 max effort。当前仅限获邀 Codex workspace。';
+        return 'GPT-5.6 Luna；低成本高吞吐，支持 none 到 max effort。';
       default:
         return undefined;
     }

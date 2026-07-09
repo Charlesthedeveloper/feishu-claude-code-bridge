@@ -59,7 +59,7 @@ export function configFormCard(opts: ConfigFormOpts): object {
   const modelLabel = opts.agentKind === 'codex' ? '默认 Codex model' : '默认 Claude model';
   const modelHelp =
     opts.agentKind === 'codex'
-      ? '_例如 `gpt-5.6`（Sol）、`gpt-5.6-terra`、`gpt-5.6-luna`。留空 = Codex CLI 默认模型；5.6 preview 需要账号权限_'
+      ? '_例如 `gpt-5.6`（自动使用完整 `gpt-5.6-sol`）、`gpt-5.6-terra`、`gpt-5.6-luna`。留空 = Codex CLI 默认模型_'
       : '_例如 `sonnet`、`sonnet5`、`fable`、`fable5`、`best`、`opus[1m]`。留空 = Claude Code 默认模型（当前 Sonnet 5）_';
   const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.6' : 'sonnet';
   const effortHelp =

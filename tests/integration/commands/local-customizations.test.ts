@@ -149,6 +149,10 @@ describe('local bridge customizations', () => {
     expect(h.sessions.getModel('chat-1')).toBe('gpt-5.6-terra');
     expect(lastMarkdown(h.channel)).toContain('GPT-5.6 Terra');
 
+    await expect(h.run('/model gpt-5.6')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('gpt-5.6-sol');
+    expect(lastMarkdown(h.channel)).toContain('GPT-5.6 Sol');
+
     await expect(h.run('/model fable')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('fable');
     expect(h.controls.cfg.preferences?.model).toBeUndefined();
