@@ -18,6 +18,7 @@ export function renderText(state: RunState): string {
     const piece = renderBlock(block);
     if (piece) parts.push(piece);
   }
+  const hasBody = parts.length > 0 || state.reasoning.content.trim().length > 0;
 
   if (state.terminal === 'interrupted') {
     parts.push('_⏹ 已被中断_');
@@ -27,7 +28,7 @@ export function renderText(state: RunState): string {
   } else if (state.terminal === 'error' && state.errorMsg) {
     parts.push(`⚠️ agent 失败:${state.errorMsg}`);
   } else if (state.terminal === 'done') {
-    parts.push('_✅ 已完成_');
+    parts.push(hasBody ? '_✅ 已完成_' : '⚠️ 已结束，但 agent 没有返回正文或工具操作。');
   } else if (state.terminal === 'running' && state.footer) {
     parts.push(footerLine(state.footer));
   }

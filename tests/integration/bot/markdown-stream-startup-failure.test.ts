@@ -111,7 +111,7 @@ describe('markdown stream startup failures', () => {
     await waitFor(() => h.agent.runOptions.length === 1);
 
     await h.channel.handlers.message?.(message('om_second', 'second'));
-    await waitFor(() => h.agent.runOptions.length === 2, 1000);
+    await waitFor(() => h.agent.runOptions.length === 2, 2500);
 
     expect(markdownMessages(h.channel).join('\n')).toContain('agent 失败');
 
@@ -192,6 +192,35 @@ describe('markdown stream startup failures', () => {
     expect(streamed.join('\n')).toContain('single streamed output');
     expect(markdownMessages(h.channel)).toEqual([]);
     streamDone.resolve();
+  }, 10_000);
+
+  it('waits briefly for a late stream producer before posting a fallback', async () => {
+    const streamed: string[] = [];
+    const h = await createHarness({
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown producer');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await producer({
+          setContent: vi.fn(async (markdown: string) => {
+            streamed.push(markdown);
+          }),
+        });
+      },
+    });
+    h.agent.setEvents([{ type: 'done', terminationReason: 'normal' }]);
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_late_producer', 'task'));
+    await waitFor(
+      () => h.channel.rawClient.im.v1.messageReaction.delete.mock.calls.length > 0,
+      4500,
+    );
+
+    expect(streamed.join('\n')).toContain('没有返回正文或工具操作');
+    expect(markdownMessages(h.channel)).toEqual([]);
   }, 10_000);
 
   it('keeps draining the agent and sends a final transcript when card updates fail', async () => {

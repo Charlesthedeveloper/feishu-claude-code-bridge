@@ -67,6 +67,7 @@ import type { AppPaths } from '../config/app-paths';
 
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
+const STREAM_PRODUCER_START_GRACE_MS = 1000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
 const FINAL_TRANSCRIPT_THRESHOLD = 6000;
 const DEFAULT_FALLBACK_SEND_RETRY_DELAYS_MS = [1000, 3000, 8000, 15000];
@@ -1190,7 +1191,24 @@ async function awaitRenderAwareStream(input: {
 
   if (!input.producerStarted()) {
     log.warn('stream', 'producer-not-started-before-agent-terminal', { mode: input.mode });
+    const terminal = await Promise.race([
+      streamResult,
+      delay(STREAM_PRODUCER_START_GRACE_MS).then(() => undefined),
+    ]);
+    if (terminal) {
+      if (!terminal.ok) {
+        log.fail('stream', terminal.err, { mode: input.mode, step: 'stream' });
+        await runFallbackReply(input.mode, first.state, input.fallback);
+        return { fallbackSent: true, terminalGraceExpired: false };
+      }
+      return { fallbackSent: false, terminalGraceExpired: false };
+    }
     await runFallbackReply(input.mode, first.state, input.fallback);
+    void streamResult.then((result) => {
+      if (!result.ok) {
+        log.fail('stream', result.err, { mode: input.mode, step: 'stream-terminal-late' });
+      }
+    });
     return { fallbackSent: true, terminalGraceExpired: false };
   }
 
