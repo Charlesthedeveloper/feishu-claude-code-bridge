@@ -70,6 +70,11 @@ import {
   type CodexThreadHistoryEntry,
   type ListCodexThreadHistoryOptions,
 } from '../session/codex-history';
+import {
+  compactCodexThread,
+  type CompactCodexThreadOptions,
+  type CompactCodexThreadResult,
+} from '../session/codex-compact';
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
@@ -136,6 +141,9 @@ export interface CommandContext {
   codexHistoryProvider?: (
     options: ListCodexThreadHistoryOptions,
   ) => Promise<CodexThreadHistoryEntry[]>;
+  codexCompactProvider?: (
+    options: CompactCodexThreadOptions,
+  ) => Promise<CompactCodexThreadResult>;
   claudeHistoryProvider?: (cwd: string, limit: number) => Promise<SessionSummary[]>;
   /** Set when invoked from a CardKit 2.0 form submit. Keys are input `name`s. */
   formValue?: Record<string, unknown>;
@@ -948,8 +956,13 @@ async function handleEffort(args: string, ctx: CommandContext): Promise<void> {
 }
 
 async function handleCompact(args: string, ctx: CommandContext): Promise<void> {
-  if (!ctx.runExecutor) {
+  const agentKind = ctx.controls.profileConfig.agentKind;
+  if (agentKind === 'claude' && !ctx.runExecutor) {
     await reply(ctx, '当前 bridge 没有可用 run executor，无法执行 compact。');
+    return;
+  }
+  if (agentKind === 'codex' && args.trim()) {
+    await reply(ctx, 'Codex 原生 `/compact` 不支持附加说明，请直接发送 `/compact`。');
     return;
   }
   const requestedCwd = effectiveWorkspaceCwd(ctx);
@@ -1029,9 +1042,14 @@ async function handleCompact(args: string, ctx: CommandContext): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
+  if (capability.agentId === 'codex') {
+    await runCodexCompact(ctx, threadId!, wasRunning);
+    return;
+  }
+
   let execution: Awaited<ReturnType<RunExecutor['submit']>>;
   try {
-    execution = await ctx.runExecutor.submit({
+    execution = await ctx.runExecutor!.submit({
       scopeId: ctx.scope,
       policy,
       sessionId,
@@ -1110,6 +1128,71 @@ async function handleCompact(args: string, ctx: CommandContext): Promise<void> {
   } catch (err) {
     log.fail('command', err, { step: 'compact' });
     reportMetric('command_fail', 1, { step: 'compact' });
+  }
+}
+
+async function runCodexCompact(
+  ctx: CommandContext,
+  threadId: string,
+  interrupted: boolean,
+): Promise<void> {
+  const codex = ctx.controls.profileConfig.codex;
+  if (!codex?.binaryPath) {
+    await reply(ctx, '当前 Codex profile 没有配置 binaryPath，无法执行 compact。');
+    return;
+  }
+
+  const provider = ctx.codexCompactProvider ?? compactCodexThread;
+  log.info('command', 'compact-start', {
+    scope: ctx.scope,
+    agent: 'codex',
+    interrupted,
+    resume: threadId,
+  });
+
+  try {
+    await ctx.channel.stream(
+      ctx.msg.chatId,
+      {
+        card: {
+          initial: renderCard(initialState),
+          producer: async (ctrl) => {
+            let state: RunState = initialState;
+            try {
+              await provider({
+                binary: codex.binaryPath,
+                threadId,
+                profileStateDir: commandProfilePaths(ctx).profileDir,
+                ...(codex.codexHome ? { codexHome: codex.codexHome } : {}),
+                ...(codex.inheritCodexHome !== undefined
+                  ? { inheritCodexHome: codex.inheritCodexHome }
+                  : {}),
+              });
+              state = reduce(state, { type: 'text', delta: 'Codex 上下文已压缩。' });
+              state = reduce(state, {
+                type: 'done',
+                sessionId: threadId,
+                terminationReason: 'normal',
+              });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              state = reduce(state, {
+                type: 'error',
+                message,
+                terminationReason: 'failed',
+              });
+              log.fail('command', err, { step: 'codex-compact', threadId });
+              reportMetric('command_fail', 1, { step: 'codex-compact' });
+            }
+            await ctrl.update(renderCard(state));
+          },
+        },
+      },
+      { replyTo: ctx.msg.messageId },
+    );
+  } catch (err) {
+    log.fail('command', err, { step: 'codex-compact-card', threadId });
+    reportMetric('command_fail', 1, { step: 'codex-compact-card' });
   }
 }
 

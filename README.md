@@ -138,7 +138,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | Command | Effect |
 |---|---|
 | `/new [effort]`, `/reset [effort]` | Clear the current session; `/new low` starts fresh with low reasoning |
-| `/compact [instructions]` | Ask the current agent to compact the current session/thread without starting a new chat |
+| `/compact` | Compact the current session/thread without starting a new chat; Claude also accepts optional instructions |
 | `/cd <path>` | Switch working directory and reset the session |
 | `/ws list` | List named workspaces |
 | `/ws save <name>` | Save the current working directory as a named workspace |
@@ -174,7 +174,7 @@ This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local
 - `/model default|<model-id>`: in a Codex profile, changes only the current chat/topic's Codex `--model` override. GPT-5.6 shortcuts are supported: `/model gpt-5.6` and `/model sol` both resolve to the full `gpt-5.6-sol` id; `/model terra` and `/model luna` resolve to `gpt-5.6-terra` and `gpt-5.6-luna`. The bridge intentionally canonicalizes the documented `gpt-5.6` alias because the ChatGPT-subscription Codex backend currently accepts the full Sol id while rejecting that alias.
 - `/model global <model-id|default>`: explicitly changes the profile-wide default model used by chats without a session override. Use this sparingly; for most per-topic work, prefer plain `/model <id>`.
 - `/new low`: clears the current session and immediately pins the new session to low effort. This does **not** create a new Feishu group; `/new chat [name]` is still the group-creation command.
-- `/compact [instructions]`: sends `/compact` into the current resumable session/thread. Use this before a long-running chat gets slow or unstable, especially when you want to keep the topic but reduce context size.
+- `/compact [instructions]`: compacts the current resumable session/thread. Claude Code receives the native slash command and optional instructions. Codex must use bare `/compact`; the bridge calls `thread/compact/start` and reports success only after Codex emits a real compaction-completed event.
 - GUI MCP: Claude runs include `bridge-mcp.json` and the `mcp__gui__*` allowlist so the agent can control local desktop GUI when macOS screen/session state allows it.
 - PAC/NO_PROXY: macOS launchd does not inherit your terminal proxy settings. `start` and `restart` capture the current shell's `http_proxy` / `https_proxy` / `all_proxy` and `NO_PROXY` / `no_proxy` into the LaunchAgent plist. The bridge now relies on `@larksuite/channel`'s built-in `respectProxyEnv` and HTTP timeout support, so Feishu/Lark API traffic can stay direct while Claude/Codex traffic uses your proxy. After changing PAC/global/proxy settings, run `./bin/lark-channel-bridge.mjs restart --profile <name>` from a shell that has the desired proxy env.
 

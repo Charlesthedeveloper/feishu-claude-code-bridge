@@ -138,7 +138,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | 命令 | 作用 |
 |---|---|
 | `/new [effort]`, `/reset [effort]` | 清空当前会话；例如 `/new low` 会新会话同时设低 reasoning |
-| `/compact [说明]` | 压缩当前 session/thread 的上下文，不新建群聊 |
+| `/compact` | 压缩当前 session/thread 的上下文，不新建群聊；Claude 可附加说明 |
 | `/cd <path>` | 切换工作目录并重置会话 |
 | `/ws list` | 列出命名工作空间 |
 | `/ws save <name>` | 把当前工作目录保存为命名工作空间 |
@@ -172,7 +172,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 - `/model opus|sonnet|sonnet-1m|haiku|fable|default|<model-id>`：修改当前 chat/topic 后续 Claude Code run 的 `--model`，不会影响其它群。Bridge 会保留 Claude Code 原生别名，也会把常见写法映射到可用 ID，例如 `sonnet-4-6` → `claude-sonnet-4-6`，`sonnet-1m` → `claude-sonnet-4-6[1m]`，`opus-1m` → `claude-opus-4-8[1m]`。`default` 清除当前会话覆盖，回到 `/config` 里的全局默认。
 - `/model global <model-id|default>`：显式修改 profile 全局默认模型，只影响没有 session 覆盖的 chat/topic。日常按主题调模型时优先用普通 `/model <id>`。
 - `/new low`：在当前 chat/topic 清空 session，并让新 session 从 low effort 开始。它**不会**新建飞书群；新建群仍然是 `/new chat [name]`。
-- `/compact [说明]`：向当前可恢复 session/thread 发送 `/compact`。长会话变慢、上下文太大但又不想丢主题时先用它。
+- `/compact [说明]`：压缩当前可恢复 session/thread。Claude Code 会收到原生 slash command，也支持附加说明；Codex 必须直接使用 `/compact`，Bridge 会调用 `thread/compact/start`，并且只在收到真实压缩完成事件后报告成功。
 - GUI MCP：Claude run 会加载 `bridge-mcp.json` 并允许 `mcp__gui__*` 工具，所以在 macOS 屏幕/会话状态允许时，agent 可以做本地桌面 GUI 操作。
 - PAC/NO_PROXY：Feishu/Lark API 请求会尊重 `NO_PROXY`，因此 `open.feishu.cn` / `open.larksuite.com` 可以直连，而 Claude/Codex 流量继续走代理。
 

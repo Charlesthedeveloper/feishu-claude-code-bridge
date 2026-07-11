@@ -194,7 +194,7 @@ export function helpCard(agentName = 'Agent'): object {
         '**命令列表**',
         '',
         '- `/new [effort]` `/reset [effort]` — 清空当前 chat 的会话；如 `/new low`',
-        '- `/compact [说明]` — 压缩当前会话上下文，保留同一个 session/thread',
+        '- `/compact [说明]` — 压缩当前会话上下文，保留同一个 session/thread（Codex 请勿附说明）',
         '- `/new chat [name]` — 新建群+新会话，自动拉你进群',
         '- `/resume [N]` — 列出并恢复历史会话（最多 N 条）',
         '- `/cd <path>` — 切换工作目录（会重置 session）',

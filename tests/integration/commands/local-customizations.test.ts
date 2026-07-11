@@ -12,6 +12,11 @@ import {
 } from '../../../src/config/profile-schema.js';
 import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
+import type {
+  CompactCodexThreadOptions,
+  CompactCodexThreadResult,
+} from '../../../src/session/codex-compact.js';
+import type { SessionCatalog } from '../../../src/session/catalog.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { createFakeAgent } from '../../helpers/fake-agent.js';
@@ -215,9 +220,47 @@ describe('local bridge customizations', () => {
     expect(rendered).toContain('agent 失败');
     expect(rendered).not.toContain('已完成');
   });
+
+  it('uses Codex app-server compaction instead of sending /compact as a prompt', async () => {
+    const compact = vi.fn(async (options: CompactCodexThreadOptions) => ({
+      threadId: options.threadId,
+      turnId: 'turn-1',
+    } satisfies CompactCodexThreadResult));
+    const h = await createHarness('codex', compact);
+
+    await expect(h.run('/compact')).resolves.toBe(true);
+
+    expect(compact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binary: '/usr/local/bin/codex',
+        threadId: 'thread-existing',
+      }),
+    );
+    expect(h.agent.runOptions).toHaveLength(0);
+    const rendered = JSON.stringify(h.channel.streams.at(-1)?.cardUpdates.at(-1));
+    expect(rendered).toContain('Codex 上下文已压缩');
+    expect(rendered).toContain('已完成');
+  });
+
+  it('rejects Codex compact instructions that the native command cannot preserve', async () => {
+    const compact = vi.fn<
+      (options: CompactCodexThreadOptions) => Promise<CompactCodexThreadResult>
+    >();
+    const h = await createHarness('codex', compact);
+
+    await expect(h.run('/compact keep market notes')).resolves.toBe(true);
+
+    expect(compact).not.toHaveBeenCalled();
+    expect(lastMarkdown(h.channel)).toContain('不支持附加说明');
+  });
 });
 
-async function createHarness(agentKind: AgentKind = 'claude'): Promise<Harness> {
+async function createHarness(
+  agentKind: AgentKind = 'claude',
+  codexCompactProvider?: (
+    options: CompactCodexThreadOptions,
+  ) => Promise<CompactCodexThreadResult>,
+): Promise<Harness> {
   const tmp = await createTmpProfile('local-custom-');
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
@@ -257,6 +300,14 @@ async function createHarness(agentKind: AgentKind = 'claude'): Promise<Harness> 
       agent,
       activeRuns,
       runExecutor,
+      ...(agentKind === 'codex'
+        ? {
+            sessionCatalog: {
+              activeFor: () => ({ threadId: 'thread-existing' }),
+            } as unknown as SessionCatalog,
+          }
+        : {}),
+      ...(codexCompactProvider ? { codexCompactProvider } : {}),
       processPool: pool,
       controls,
     });
