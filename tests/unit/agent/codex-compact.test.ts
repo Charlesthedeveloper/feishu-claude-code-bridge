@@ -44,6 +44,7 @@ describe('Codex thread compaction provider', () => {
     expect(record.argv).toEqual(['app-server', '--listen', 'stdio://']);
     expect(record.requests).toMatchObject([
       { method: 'initialize' },
+      { method: 'thread/resume', params: { threadId: 'thread-1' } },
       { method: 'thread/compact/start', params: { threadId: 'thread-1' } },
     ]);
   });
@@ -99,6 +100,7 @@ const requests = [];
 const recordPath = ${JSON.stringify(recordPath)};
 const mode = ${JSON.stringify(mode)};
 let persisted = false;
+let resumedThread;
 
 function persist() {
   if (persisted) return;
@@ -124,7 +126,23 @@ rl.on('line', (line) => {
     process.stdout.write(JSON.stringify({ id: req.id, result: {} }) + '\\n');
     return;
   }
+  if (req.method === 'thread/resume') {
+    resumedThread = req.params.threadId;
+    process.stdout.write(JSON.stringify({
+      id: req.id,
+      result: { thread: { id: resumedThread } }
+    }) + '\\n');
+    return;
+  }
   if (req.method !== 'thread/compact/start') return;
+
+  if (resumedThread !== req.params.threadId) {
+    process.stdout.write(JSON.stringify({
+      id: req.id,
+      error: { code: -32000, message: 'thread not found: ' + req.params.threadId }
+    }) + '\\n');
+    return;
+  }
 
   process.stdout.write(JSON.stringify({ id: req.id, result: {} }) + '\\n');
   if (mode === 'success') {

@@ -97,7 +97,7 @@ export async function compactCodexThread(
       const message = parseRecord(line);
       if (!message) return;
 
-      if (message.id === 2 && message.error) {
+      if ((message.id === 2 || message.id === 3) && message.error) {
         const error = recordValue(message.error);
         fail(
           new CodexCompactError(
@@ -105,6 +105,17 @@ export async function compactCodexThread(
             stringValue(error?.message) ?? 'codex app-server rejected compaction',
           ),
         );
+        return;
+      }
+
+      if (message.id === 2 && message.result) {
+        try {
+          child.stdin.write(`${JSON.stringify(compactRequest(options.threadId))}\n`, 'utf8', (err?: Error | null) => {
+            if (err) fail(err);
+          });
+        } catch (err) {
+          fail(err);
+        }
         return;
       }
 
@@ -167,7 +178,7 @@ export async function compactCodexThread(
 
     try {
       child.stdin.write(
-        `${JSON.stringify(initializeRequest())}\n${JSON.stringify(compactRequest(options.threadId))}\n`,
+        `${JSON.stringify(initializeRequest())}\n${JSON.stringify(resumeRequest(options.threadId))}\n`,
         'utf8',
         (err?: Error | null) => {
           if (err) fail(err);
@@ -214,6 +225,14 @@ function initializeRequest() {
 function compactRequest(threadId: string) {
   return {
     method: 'thread/compact/start',
+    id: 3,
+    params: { threadId },
+  };
+}
+
+function resumeRequest(threadId: string) {
+  return {
+    method: 'thread/resume',
     id: 2,
     params: { threadId },
   };
