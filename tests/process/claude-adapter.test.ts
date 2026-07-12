@@ -249,6 +249,56 @@ describe('ClaudeAdapter process contract', () => {
     await iterator.return?.();
   });
 
+  it('keeps reading a resumed session after a stale zero-token result', async () => {
+    const fake = await createFakeClaude({
+      lines: [
+        {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-resumed',
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+        {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'recovered answer' }] },
+        },
+        {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-resumed',
+          total_cost_usd: 0.01,
+          usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 0 },
+        },
+      ],
+    });
+    cleanup.push(fake.dir);
+
+    const run = new ClaudeAdapter({ binary: fake.path }).run({
+      runId: 'run-stale-notification',
+      prompt: 'latest user message',
+      cwd: fake.dir,
+      sessionId: 'sess-resumed',
+    });
+
+    expect(await collect(run.events)).toEqual([
+      { type: 'text', delta: 'recovered answer' },
+      {
+        type: 'usage',
+        inputTokens: 10,
+        outputTokens: 2,
+        cachedInputTokens: 0,
+        costUsd: 0.01,
+      },
+      { type: 'done', sessionId: 'sess-resumed', terminationReason: 'normal' },
+    ]);
+  });
+
   it('requires cwd to be resolved by policy before spawning', () => {
     expect(() =>
       new ClaudeAdapter({ binary: 'unused' }).run({ runId: 'run-no-cwd', prompt: 'hi' }),

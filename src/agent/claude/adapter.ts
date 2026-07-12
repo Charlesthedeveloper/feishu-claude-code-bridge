@@ -183,7 +183,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     return {
       runId: opts.runId,
-      events: createEventStream(child, stderrChunks, () => runtimeError),
+      events: createEventStream(child, stderrChunks, () => runtimeError, Boolean(opts.sessionId)),
       async stop() {
         if (child.exitCode !== null || child.signalCode !== null) return;
         log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
@@ -230,6 +230,7 @@ async function* createEventStream(
   child: ClaudeChild,
   stderrChunks: Buffer[],
   getError: () => Error | null,
+  resumedSession: boolean,
 ): AsyncGenerator<AgentEvent> {
   // If fork itself failed synchronously, child.pid is undefined. The 'error'
   // event (ENOENT etc.) fires in the next tick, so also check getError().
@@ -245,6 +246,8 @@ async function* createEventStream(
 
   const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
   let sawStdout = false;
+  let sawAgentWork = false;
+  let deferredEmptyDone: AgentEvent | undefined;
   let silentExitTimer: ReturnType<typeof setTimeout> | undefined;
   const closeSilentStdout = (): void => {
     silentExitTimer = setTimeout(() => {
@@ -263,7 +266,26 @@ async function* createEventStream(
       } catch {
         continue;
       }
-      yield* translateEvent(parsed);
+      const translated = [...translateEvent(parsed)];
+      if (resumedSession && !sawAgentWork && isZeroTokenSuccessfulResult(parsed)) {
+        deferredEmptyDone = translated.find((event) => event.type === 'done');
+        log.warn('agent', 'deferred-empty-result', {
+          reason: 'resumed-session-may-have-pending-input',
+        });
+        continue;
+      }
+      for (const event of translated) {
+        if (
+          event.type === 'text' ||
+          event.type === 'thinking' ||
+          event.type === 'tool_use' ||
+          event.type === 'tool_result'
+        ) {
+          sawAgentWork = true;
+        }
+        if (event.type === 'done' || event.type === 'error') deferredEmptyDone = undefined;
+        yield event;
+      }
     }
   } finally {
     if (silentExitTimer) clearTimeout(silentExitTimer);
@@ -307,7 +329,35 @@ async function* createEventStream(
       message: `claude runtime error: ${runtimeError.message}`,
       terminationReason: 'failed',
     };
+  } else if (deferredEmptyDone) {
+    // A genuinely empty resumed run may exit after the zero-token result.
+    // Preserve the normal terminal event once stdout has actually closed.
+    yield deferredEmptyDone;
   }
+}
+
+function isZeroTokenSuccessfulResult(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const event = raw as {
+    type?: unknown;
+    is_error?: unknown;
+    total_cost_usd?: unknown;
+    usage?: {
+      input_tokens?: unknown;
+      output_tokens?: unknown;
+      cache_read_input_tokens?: unknown;
+      cache_creation_input_tokens?: unknown;
+    };
+  };
+  if (event.type !== 'result' || event.is_error === true || !event.usage) return false;
+  const values = [
+    event.usage.input_tokens,
+    event.usage.output_tokens,
+    event.usage.cache_read_input_tokens,
+    event.usage.cache_creation_input_tokens,
+  ];
+  return values.every((value) => value === undefined || value === 0) &&
+    (event.total_cost_usd === undefined || event.total_cost_usd === 0);
 }
 
 function isWindowsCommandNotFoundLine(line: string): boolean {
