@@ -14,6 +14,7 @@
 - **排队与消息合并**：短时间连续发送的消息会合并处理；任务运行中收到的普通消息会排队到下一轮，`/new`、`/cd`、`/ws use`、`/stop` 这类命令可以中断当前任务。
 - **多工作空间**：用 `/cd` 切换当前项目，用 `/ws` 保存和复用常用项目目录。
 - **图片 / 文件**：直接发给 bot，bridge 下载到本地后交给本机 agent 处理。
+- **其他 bot 交接**：在群里真实 @ 另一个 bot 时，Bridge 不抢答，而是按需监听对方后续结果；卡片、文件和文本稳定后，会连同原始委托送回当前 Claude/Codex session。监听是一次性的，并会自动过期以避免机器人循环。
 - **卡片按钮**：`/help`、`/ws list`、`/status` 返回可点击的交互卡片。
 - **本地定制功能**：Claude reasoning effort 控制、`/compact`、GUI MCP 桌面自动化工具，以及适配 PAC 的 Feishu/Lark 直连逻辑。
 
@@ -174,6 +175,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 - `/new low`：在当前 chat/topic 清空 session，并让新 session 从 low effort 开始。它**不会**新建飞书群；新建群仍然是 `/new chat [name]`。
 - `/compact [说明]`：压缩当前可恢复 session/thread。Claude Code 会收到原生 slash command，也支持附加说明；Codex 必须直接使用 `/compact`，Bridge 会调用 `thread/compact/start`，并且只在收到真实压缩完成事件后报告成功。
 - GUI MCP：Claude run 会加载 `bridge-mcp.json` 并允许 `mcp__gui__*` 工具，所以在 macOS 屏幕/会话状态允许时，agent 可以做本地桌面 GUI 操作。
+- 其他 bot 交接：真实 @ 另一个 bot 会开启最长六小时的一次性监听。飞书不会把未 @ 当前 bot 的其他机器人消息推到 WebSocket，因此 Bridge 只在明确交办后轮询当前群、只匹配被 @ 的 bot；等卡片更新稳定后，把原始委托、结果和附件合并送入同一 session，然后立刻停止监听以防循环。
 - PAC/NO_PROXY：Feishu/Lark API 请求会尊重 `NO_PROXY`，因此 `open.feishu.cn` / `open.larksuite.com` 可以直连，而 Claude/Codex 流量继续走代理。
 
 健身记录、日常闲聊、起名发散这类轻任务，建议用 `low` 或 `medium`。代码、debug、严肃研究再用 `high`、`xhigh`、`max` 或 `ultracode`，否则更慢，也更容易遇到上游抖动。

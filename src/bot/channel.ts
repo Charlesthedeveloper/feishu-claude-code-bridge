@@ -55,6 +55,7 @@ import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, type RunHandle } from './active-runs';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
+import { ExternalBotWatcher } from './external-bot-watcher';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
 import { startKeepalive } from './keepalive';
@@ -283,6 +284,23 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     });
   });
 
+  // Feishu's WS event stream does not deliver another bot's unmentioned
+  // group output. Start a narrow, one-shot REST watcher only after the user
+  // explicitly delegates work by @-mentioning that bot.
+  const externalBotWatcher = new ExternalBotWatcher({
+    channel,
+    ownAppId: cfg.accounts.app.id,
+    onResult: ({ scope, trigger, messages }) => {
+      const batch = [trigger, ...messages];
+      for (const message of batch) pending.push(scope, message);
+      log.info('bot-watch', 'queued', {
+        scope,
+        batchSize: batch.length,
+        resultMessages: messages.length,
+      });
+    },
+  });
+
   // Counter for stdout reconnect escalation; reset on `reconnected`.
   let consecutiveReconnects = 0;
 
@@ -302,6 +320,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           chatModeCache,
           executor,
           pool,
+          externalBotWatcher,
         }),
       ).catch((err) => log.fail('intake', err));
     },
@@ -379,6 +398,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   });
 
   await channel.connect();
+  externalBotWatcher.start();
   const ownerRefresh = createOwnerRefreshController({
     controls,
     source: channel,
@@ -422,6 +442,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       ownerRefresh.stop();
       knownChatsRefresh.stop();
       keepalive.stop();
+      externalBotWatcher.stop();
       pending.cancelAll();
       const [disconnectResult, stopAllResult, ...flushResults] = await Promise.allSettled([
         channel.disconnect(),
@@ -494,6 +515,7 @@ interface IntakeDeps {
   chatModeCache: ChatModeCache;
   executor: RunExecutor;
   pool: ProcessPool;
+  externalBotWatcher: ExternalBotWatcher;
 }
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
@@ -510,6 +532,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     chatModeCache,
     executor,
     pool,
+    externalBotWatcher,
   } = deps;
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
@@ -542,6 +565,21 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
         log.warn('intake', 'non-allowed-hint-failed', { err: String(err) }),
       );
     }
+    return;
+  }
+
+  const delegation = await externalBotWatcher.observeDelegation(msg, scope).catch((err) => {
+    log.warn('bot-watch', 'observe-failed', {
+      scope,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  });
+  if (delegation?.delegatedOnly) {
+    log.info('intake', 'delegated-external-bot', {
+      scope,
+      targets: delegation.targets.map((target) => target.name ?? target.appId).join(','),
+    });
     return;
   }
 

@@ -45,6 +45,7 @@ interface FakeLarkChannel {
       v1: {
         message: {
           get: ReturnType<typeof vi.fn>;
+          list: ReturnType<typeof vi.fn>;
         };
         messageReaction: {
           create: ReturnType<typeof vi.fn>;
@@ -81,6 +82,40 @@ describe('bot identity injection into the agent adapter', () => {
 });
 
 describe('sender identity in bridge_context', () => {
+  it('silently watches a user message addressed only to another bot', async () => {
+    const h = await createHarness();
+    h.channel.rawClient.request.mockResolvedValueOnce({
+      code: 0,
+      data: {
+        items: [
+          { member_id: 'ou_bot', app_id: 'cli_test', name: 'Bridge' },
+          { member_id: 'ou_alpha', app_id: 'cli_alpha', name: 'AlphaPai Work' },
+        ],
+        has_more: false,
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(
+      message({
+        messageId: 'om_delegate',
+        content: '@AlphaPai Work 请研究中际旭创',
+        rawSenderType: 'user',
+        mentionedBot: false,
+        mentions: [
+          { key: '@_user_1', openId: 'ou_alpha', name: 'AlphaPai Work' },
+        ],
+      }),
+    );
+
+    expect(h.agent.runOptions).toHaveLength(0);
+    expect(h.channel.rawClient.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/open-apis/im/v1/chats/oc_chat/members/list',
+      }),
+    );
+  });
+
   it('marks a bot sender via raw sender_type and injects botOpenId and mentions', async () => {
     const h = await createHarness();
     await startTestBridge(h);
@@ -318,6 +353,7 @@ function createFakeLarkChannel(): FakeLarkChannel & { handlers: MessageHandlerMa
         v1: {
           message: {
             get: vi.fn(async () => ({ data: { items: [] } })),
+            list: vi.fn(async () => ({ data: { items: [], has_more: false } })),
           },
           messageReaction: {
             create: vi.fn(async () => ({ data: { reaction_id: 'reaction_1' } })),
@@ -366,6 +402,7 @@ function message(input: {
   senderId?: string;
   senderName?: string;
   rawSenderType?: string;
+  mentionedBot?: boolean;
   mentions?: Array<{ key: string; openId?: string; name?: string; isBot?: boolean }>;
 }): NormalizedMessage {
   return {
@@ -381,7 +418,7 @@ function message(input: {
       { key: '@_user_1', openId: 'ou_bot', name: 'Bridge', isBot: true },
     ],
     mentionAll: false,
-    mentionedBot: true,
+    mentionedBot: input.mentionedBot ?? true,
     createTime: 1760000001000,
     ...(input.rawSenderType
       ? {

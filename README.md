@@ -14,6 +14,7 @@ For a product walkthrough, see the [Feishu document](https://larkcommunity.feish
 - **Queueing and batching**: messages sent in quick succession are handled together; messages sent during a run are queued for the next turn, while commands like `/new`, `/cd`, `/ws use`, and `/stop` can interrupt the current task.
 - **Multiple workspaces**: use `/cd` to switch the current project, and `/ws` to save and reuse common project directories.
 - **Images and files**: send them to the bot directly, and the bridge downloads them locally for the agent.
+- **Delegated bot handoffs**: when you @ another bot in a group, the bridge stays quiet, watches that bot's result through chat history, then feeds the stable card/file/text result back into the same local agent session. Watches are one-shot and expire automatically to prevent bot loops.
 - **Interactive cards**: `/help`, `/ws list`, and `/status` return cards with clickable buttons.
 - **Local customizations in this branch**: agent-aware model/effort controls, `/compact`, GUI MCP tools for desktop automation, and PAC-friendly Feishu/Lark direct-connect handling.
 
@@ -176,6 +177,7 @@ This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local
 - `/new low`: clears the current session and immediately pins the new session to low effort. This does **not** create a new Feishu group; `/new chat [name]` is still the group-creation command.
 - `/compact [instructions]`: compacts the current resumable session/thread. Claude Code receives the native slash command and optional instructions. Codex must use bare `/compact`; the bridge calls `thread/compact/start` and reports success only after Codex emits a real compaction-completed event.
 - GUI MCP: Claude runs include `bridge-mcp.json` and the `mcp__gui__*` allowlist so the agent can control local desktop GUI when macOS screen/session state allows it.
+- External-bot delegation: a real @mention of another bot starts a six-hour one-shot watcher. Because Feishu does not push unmentioned bot-authored messages to this bot's WebSocket, the watcher polls only that chat and only for the mentioned bot. It waits for card updates to settle, batches the original request with the result and attachments, resumes the current session, then stops before the bots can loop.
 - PAC/NO_PROXY: macOS launchd does not inherit your terminal proxy settings. `start` and `restart` capture the current shell's `http_proxy` / `https_proxy` / `all_proxy` and `NO_PROXY` / `no_proxy` into the LaunchAgent plist. The bridge now relies on `@larksuite/channel`'s built-in `respectProxyEnv` and HTTP timeout support, so Feishu/Lark API traffic can stay direct while Claude/Codex traffic uses your proxy. After changing PAC/global/proxy settings, run `./bin/lark-channel-bridge.mjs restart --profile <name>` from a shell that has the desired proxy env.
 
 For quick personal chats like fitness logs or naming brainstorms, use `low` or `medium` on Claude, and `none`, `minimal`, or `low` on Codex. Claude Code's model default is currently `high` on Fable 5, Sonnet 5, and Opus 4.8. Reserve `xhigh`, Claude `max`, or `ultracode` for code, debugging, and serious research where extra reasoning is worth the latency and upstream flakiness risk.
@@ -319,6 +321,8 @@ Cloud-doc comments do not need a separate workspace binding or document allowlis
 **The agent subprocess looks frozen (card stuck on the last frame).** The bridge now treats the interactive card as a live preview, not the only delivery path. If a card update fails or the final answer is long, the agent keeps running and the bridge posts a `完整输出` markdown transcript afterward; the SDK splits that markdown into multiple messages when needed, and terminal states include a visible `✅ 已完成` / error / timeout marker. Separately, the bridge supports an idle watchdog: if the agent emits nothing for N minutes, the process is killed and the card is annotated with the auto-termination reason. Disabled by default. Enable with `/config` globally, or `/timeout 10` for the current session; `/timeout off` disables it for the session; `/timeout default` clears the session override.
 
 **The agent says it cannot see an image I sent.** Upgrade to the latest version. Releases before 0.1.0 had a filename-dedup bug.
+
+**I @mentioned another bot, but Claude/Codex did not see its result.** The bridge now creates an on-demand handoff watcher when the original @mention is a real structured mention and both bots are members of the same group. Plain text such as `@AlphaPai` is not a real mention and cannot start a watch. The watch expires after six hours and stops after forwarding the first stable result batch.
 
 ## Testing and CI
 
