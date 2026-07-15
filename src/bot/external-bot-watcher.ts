@@ -172,26 +172,31 @@ export class ExternalBotWatcher {
     scope: string,
   ): Promise<DelegationObservation | undefined> {
     if (msg.chatType === 'p2p' || senderTypeOf(msg) !== 'user') return undefined;
-    const mentionedOpenIds = new Set(
-      (msg.mentions ?? [])
-        .map((mention) => mention.openId)
-        .filter((openId): openId is string => Boolean(openId)),
-    );
-    if (mentionedOpenIds.size === 0) return undefined;
+    const mentionRefs = structuredMentionRefs(msg);
+    if (mentionRefs.length === 0) return undefined;
 
     const observedAt = this.now();
     const triggerAt = msg.createTime > 0 ? Math.min(msg.createTime, observedAt) : observedAt;
     const botMembers = await this.fetchBotMembers(msg.chatId);
     const ownOpenId = this.channel.botIdentity?.openId;
-    const targets = [...mentionedOpenIds]
-      .filter((openId) => openId !== ownOpenId)
-      .map((openId) => botMembers.get(openId))
-      .filter((target): target is ExternalBotTarget => Boolean(target?.appId));
+    const targetsByAppId = new Map<string, ExternalBotTarget>();
+    for (const mention of mentionRefs) {
+      const target = (mention.openId ? botMembers.get(mention.openId) : undefined)
+        ?? [...botMembers.values()].find((member) =>
+          (mention.appId && member.appId === mention.appId)
+          || (mention.name && member.name === mention.name),
+        );
+      if (!target || target.openId === ownOpenId || target.appId === this.ownAppId) continue;
+      targetsByAppId.set(target.appId, target);
+    }
+    const targets = [...targetsByAppId.values()];
     if (targets.length === 0) return undefined;
 
     const targetOpenIds = new Set(targets.map((target) => target.openId));
+    const targetAppIds = new Set(targets.map((target) => target.appId));
     msg.mentions = (msg.mentions ?? []).map((mention) =>
-      mention.openId && targetOpenIds.has(mention.openId)
+      (mention.openId && targetOpenIds.has(mention.openId))
+        || (mention.userId && targetAppIds.has(mention.userId))
         ? { ...mention, isBot: true }
         : mention,
     );
@@ -449,6 +454,44 @@ export class ExternalBotWatcher {
 
 function senderTypeOf(msg: NormalizedMessage): string | undefined {
   return (msg.raw as { sender?: { sender_type?: string } } | undefined)?.sender?.sender_type;
+}
+
+interface StructuredMentionRef {
+  openId?: string;
+  appId?: string;
+  name?: string;
+}
+
+/**
+ * Feishu represents bot mentions inconsistently across event and history APIs:
+ * some payloads use the bot open_id while others put the bot app_id in the
+ * user_id slot. Preserve both forms and use names only as a final match for a
+ * real structured mention, never for plain "@name" text.
+ */
+function structuredMentionRefs(msg: NormalizedMessage): StructuredMentionRef[] {
+  const refs: StructuredMentionRef[] = (msg.mentions ?? []).map((mention) => ({
+    ...(mention.openId ? { openId: mention.openId } : {}),
+    ...(mention.userId?.startsWith('cli_') ? { appId: mention.userId } : {}),
+    ...(mention.name ? { name: mention.name } : {}),
+  }));
+  const rawMentions = (
+    msg.raw as {
+      message?: {
+        mentions?: Array<{
+          id?: { open_id?: string; user_id?: string };
+          name?: string;
+        }>;
+      };
+    } | undefined
+  )?.message?.mentions ?? [];
+  for (const mention of rawMentions) {
+    refs.push({
+      ...(mention.id?.open_id ? { openId: mention.id.open_id } : {}),
+      ...(mention.id?.user_id?.startsWith('cli_') ? { appId: mention.id.user_id } : {}),
+      ...(mention.name ? { name: mention.name } : {}),
+    });
+  }
+  return refs.filter((ref) => ref.openId || ref.appId || ref.name);
 }
 
 function mentionId(

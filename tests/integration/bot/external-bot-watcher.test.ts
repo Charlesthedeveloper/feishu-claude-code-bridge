@@ -11,7 +11,9 @@ describe('ExternalBotWatcher', () => {
   it('recognizes a real external-bot mention and marks it as a silent delegation', async () => {
     const h = harness();
     const trigger = userMessage({
-      mentions: [{ key: '@_user_1', openId: 'ou_alpha', name: 'AlphaPai Work' }],
+      // This is the shape observed in live Feishu events: bot app_id is
+      // surfaced through MentionInfo.userId instead of openId.
+      mentions: [{ key: '@_user_1', userId: 'cli_alpha', name: 'AlphaPai Work' }],
       mentionedBot: false,
     });
 
@@ -22,7 +24,7 @@ describe('ExternalBotWatcher', () => {
       targets: [{ openId: 'ou_alpha', appId: 'cli_alpha', name: 'AlphaPai Work' }],
     });
     expect(trigger.mentions).toEqual([
-      { key: '@_user_1', openId: 'ou_alpha', name: 'AlphaPai Work', isBot: true },
+      { key: '@_user_1', userId: 'cli_alpha', name: 'AlphaPai Work', isBot: true },
     ]);
     expect(h.memberRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -193,7 +195,7 @@ function harness(options: { watchTtlMs?: number } = {}) {
 
 function userMessage(input: {
   content?: string;
-  mentions: Array<{ key: string; openId: string; name: string }>;
+  mentions: Array<{ key: string; openId?: string; userId?: string; name: string }>;
   mentionedBot: boolean;
 }): NormalizedMessage {
   return {

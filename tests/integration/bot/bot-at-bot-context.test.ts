@@ -103,7 +103,7 @@ describe('sender identity in bridge_context', () => {
         rawSenderType: 'user',
         mentionedBot: false,
         mentions: [
-          { key: '@_user_1', openId: 'ou_alpha', name: 'AlphaPai Work' },
+          { key: '@_user_1', userId: 'cli_alpha', name: 'AlphaPai Work' },
         ],
       }),
     );
@@ -403,7 +403,13 @@ function message(input: {
   senderName?: string;
   rawSenderType?: string;
   mentionedBot?: boolean;
-  mentions?: Array<{ key: string; openId?: string; name?: string; isBot?: boolean }>;
+  mentions?: Array<{
+    key: string;
+    openId?: string;
+    userId?: string;
+    name?: string;
+    isBot?: boolean;
+  }>;
 }): NormalizedMessage {
   return {
     messageId: input.messageId,
