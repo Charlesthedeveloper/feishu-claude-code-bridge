@@ -70,22 +70,22 @@ describe('local bridge customizations', () => {
     const h = await createHarness();
     h.controls.cfg.preferences = {
       ...(h.controls.cfg.preferences ?? {}),
-      model: 'claude-opus-4-8',
+      model: 'claude-opus-5',
     };
 
     await expect(h.run('/model')).resolves.toBe(true);
-    expect(lastMarkdown(h.channel)).toContain('claude-opus-4-8');
+    expect(lastMarkdown(h.channel)).toContain('claude-opus-5');
     expect(lastMarkdown(h.channel)).toContain('跟随全局');
 
     await expect(h.run('/model fable')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('fable');
     expect(h.sessions.getModel('chat-2')).toBeUndefined();
-    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
     expect(lastMarkdown(h.channel)).toContain('fable');
 
     await expect(h.run('/model fable5')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('claude-fable-5');
-    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
     expect(lastMarkdown(h.channel)).toContain('claude-fable-5');
 
     await expect(h.run('/model best')).resolves.toBe(true);
@@ -94,17 +94,22 @@ describe('local bridge customizations', () => {
 
     await expect(h.run('/model opus')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('opus');
-    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
     expect(lastMarkdown(h.channel)).toContain('opus');
+
+    await expect(h.run('/model opus5')).resolves.toBe(true);
+    expect(h.sessions.getModel('chat-1')).toBe('claude-opus-5');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
+    expect(lastMarkdown(h.channel)).toContain('Opus 5');
 
     await expect(h.run('/model sonnet-4-6')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-4-6');
-    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
     expect(lastMarkdown(h.channel)).toContain('claude-sonnet-4-6');
 
     await expect(h.run('/model sonnet5')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBe('claude-sonnet-5');
-    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
     expect(lastMarkdown(h.channel)).toContain('claude-sonnet-5');
 
     await expect(h.run('/model sonnet-1m')).resolves.toBe(true);
@@ -117,17 +122,17 @@ describe('local bridge customizations', () => {
 
     await expect(h.run('/model default')).resolves.toBe(true);
     expect(h.sessions.getModel('chat-1')).toBeUndefined();
-    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-4-8');
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
     expect(lastMarkdown(h.channel)).toContain('已清除当前 session Claude model');
   });
 
   it('can still set the Claude global default model explicitly', async () => {
     const h = await createHarness();
 
-    await expect(h.run('/model global fable')).resolves.toBe(true);
-    expect(h.controls.cfg.preferences?.model).toBe('fable');
+    await expect(h.run('/model global opus5')).resolves.toBe(true);
+    expect(h.controls.cfg.preferences?.model).toBe('claude-opus-5');
     expect(h.sessions.getModel('chat-1')).toBeUndefined();
-    expect(lastMarkdown(h.channel)).toContain('全局默认 Claude model 已设为 `fable`');
+    expect(lastMarkdown(h.channel)).toContain('全局默认 Claude model 已设为 `claude-opus-5`');
 
     await expect(h.run('/model global default')).resolves.toBe(true);
     expect(h.controls.cfg.preferences?.model).toBe('');

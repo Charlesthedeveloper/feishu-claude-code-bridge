@@ -79,6 +79,16 @@ describe('bot identity injection into the agent adapter', () => {
 
     expect(h.agent.botIdentity).toEqual({ openId: 'ou_bot', name: 'Bridge' });
   });
+
+  it('keeps the Feishu channel transport direct', async () => {
+    const h = await createHarness();
+
+    await startTestBridge(h);
+
+    expect(sdkMock.createLarkChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ respectProxyEnv: false }),
+    );
+  });
 });
 
 describe('sender identity in bridge_context', () => {

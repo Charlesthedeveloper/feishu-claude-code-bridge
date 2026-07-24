@@ -28,4 +28,15 @@ describe('agent-specific settings', () => {
   it('does not apply Codex shortcuts to Claude profiles', () => {
     expect(normalizeAgentModelForAgent('terra', 'claude')).toBe('terra');
   });
+
+  it.each([
+    ['opus5', 'claude-opus-5'],
+    ['opus-5', 'claude-opus-5'],
+    ['Claude Opus 5', 'claude-opus-5'],
+    ['opus-5-1m', 'claude-opus-5'],
+    ['opus48', 'claude-opus-4-8'],
+    ['opus481m', 'claude-opus-4-8[1m]'],
+  ])('maps the Claude model shortcut %s to %s', (raw, expected) => {
+    expect(normalizeAgentModelForAgent(raw, 'claude')).toBe(expected);
+  });
 });

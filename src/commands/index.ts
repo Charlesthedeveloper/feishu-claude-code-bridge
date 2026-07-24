@@ -331,13 +331,13 @@ function modelUsage(agentKind: AgentKind): string {
         'GPT-5.6：`/model gpt-5.6` 或 `/model sol`（均使用完整 `gpt-5.6-sol`）、`/model terra`、`/model luna`。',
       ].join('\n')
     : [
-        '用法：`/model [default|best|opus|opus[1m]|sonnet|sonnet[1m]|sonnet5|haiku|fable|fable5|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
-        '常用：`/model sonnet`、`/model sonnet5`、`/model fable`、`/model fable5`、`/model opus[1m]`、`/model best`。',
+        '用法：`/model [default|best|opus|opus5|sonnet|sonnet5|haiku|fable|fable5|<claude-model-id>]` 设置当前 session；`/model global <model-id|default>` 改全局默认。',
+        '常用：`/model opus5`、`/model sonnet5`、`/model fable5`、`/model best`。Opus 5 / Sonnet 5 / Fable 5 都原生支持 1M context。',
       ].join('\n');
 }
 
 function defaultModelLabel(agentKind: AgentKind): string {
-  return agentKind === 'codex' ? 'Codex CLI default' : 'Claude Code default (currently Sonnet 5)';
+  return agentKind === 'codex' ? 'Codex CLI default' : 'Claude Code account default';
 }
 
 function formatEffort(effort: AgentEffort): string {
@@ -391,9 +391,9 @@ function modelDetail(model: string | undefined, agentKind: AgentKind): string | 
     case 'best':
       return 'Claude Code best alias；优先用当前账号可用的最强模型，Fable 5 不可用时回退。';
     case 'opus':
-      return 'Claude Code latest Opus alias；Anthropic API 下当前解析到 Opus 4.8。要强制 1M 用 `opus[1m]`。';
+      return 'Claude Code latest Opus alias；当前解析到 Opus 5。';
     case 'opus[1m]':
-      return 'Claude Code official Opus 1M alias；当前为 Opus 4.8 1M。';
+      return 'Claude Code official Opus 1M alias；当前 Opus 5 已原生使用 1M context。';
     case 'sonnet':
       return 'Claude Code latest Sonnet alias；Anthropic API 下当前解析到 Sonnet 5。';
     case 'sonnet[1m]':
@@ -402,8 +402,10 @@ function modelDetail(model: string | undefined, agentKind: AgentKind): string | 
       return 'Claude Code latest Haiku alias；当前本机 Claude Code 2.1.x = Haiku 4.5。';
     case 'fable':
       return 'Claude Code Fable alias；Fable 5 已恢复访问，但仍可能受账号/组织 entitlement 限制。';
+    case 'claude-opus-5':
+      return 'Opus 5；1M context，官方默认 effort 为 high，coding / agentic work 建议从 xhigh 开始。';
     case 'claude-opus-4-8':
-      return 'Opus 4.8。';
+      return 'Opus 4.8（旧版固定模型）。';
     case 'claude-opus-4-8[1m]':
       return 'Opus 4.8，1M context。';
     case 'claude-sonnet-4-6':
@@ -415,7 +417,7 @@ function modelDetail(model: string | undefined, agentKind: AgentKind): string | 
     case 'claude-haiku-4-5':
       return 'Haiku 4.5。';
     case 'claude-fable-5':
-      return 'Fable 5；默认 effort 为 high，最高支持 max。';
+      return 'Fable 5；Anthropic 最高能力档，默认 effort 为 high，最高支持 max。';
     default:
       return undefined;
   }

@@ -241,8 +241,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     // Per-request REST timeout — without a cap a slow API can hang the
     // event-handling thread.
     httpTimeoutMs: 30_000,
-    // Route WS + REST through HTTPS_PROXY / HTTP_PROXY when set (no-op otherwise).
-    respectProxyEnv: true,
+    // Feishu/Lark is reachable directly in both China and abroad. Keep the
+    // channel transport off the agent proxy: the SDK's persistent WebSocket
+    // proxy path does not reliably honor NO_PROXY and causes ping timeouts.
+    // Claude/Codex children still inherit the LaunchAgent proxy environment.
+    respectProxyEnv: false,
   };
 
   const channel = createLarkChannel(opts);

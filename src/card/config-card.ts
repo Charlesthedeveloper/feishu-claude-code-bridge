@@ -60,12 +60,12 @@ export function configFormCard(opts: ConfigFormOpts): object {
   const modelHelp =
     opts.agentKind === 'codex'
       ? '_例如 `gpt-5.6`（自动使用完整 `gpt-5.6-sol`）、`gpt-5.6-terra`、`gpt-5.6-luna`。留空 = Codex CLI 默认模型_'
-      : '_例如 `sonnet`、`sonnet5`、`fable`、`fable5`、`best`、`opus[1m]`。留空 = Claude Code 默认模型（当前 Sonnet 5）_';
-  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.6' : 'sonnet';
+      : '_例如 `opus5`（固定 Opus 5）、`sonnet5`、`fable5`、`best`。留空 = Claude Code 账号默认模型_';
+  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.6' : 'opus5';
   const effortHelp =
     opts.agentKind === 'codex'
       ? '_控制 Codex `model_reasoning_effort`；快速聊天用 none/minimal，复杂代码/研究用 high/xhigh，GPT-5.6 可用 max_'
-      : '_控制新 run 的 Claude Code effort；官方持久默认支持 low/medium/high/xhigh，max/ultracode 请在具体 chat 里用 `/effort` 临时设置_';
+      : '_Claude 官方默认是 high；Opus 5 的 coding / agentic work 建议 xhigh，普通工作 high，简单聊天可用 medium/low。max/ultracode 请在具体 chat 里临时设置_';
   const effortOptions =
     opts.agentKind === 'codex'
       ? (['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)
