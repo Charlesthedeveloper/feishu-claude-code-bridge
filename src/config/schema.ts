@@ -67,6 +67,7 @@ export interface SecretsConfig {
  * `markdown`. See `messageReplyMigrated` for the auto-coercion logic.
  */
 export type MessageReplyMode = 'card' | 'markdown' | 'text';
+export type CotMessagesMode = 'off' | 'brief' | 'detailed';
 
 export type AgentEffort =
   | 'none'
@@ -94,6 +95,9 @@ export interface AppAccess {
    * (/account, /config, /exit, /reconnect, /doctor, /cd, /ws, /doc,
    * /invite, /remove). */
   admins?: string[];
+  /** Per-chat @-mention override (chat_id → bool); overrides the global
+   * requireMentionInGroup for the listed chats. */
+  chatRequireMention?: Record<string, boolean>;
 }
 
 export interface AppPreferences {
@@ -114,6 +118,20 @@ export interface AppPreferences {
    * text answer and want to hide the "工具调用过程".
    */
   showToolCalls?: boolean;
+  /**
+   * Model the underlying agent runs with, forwarded as `--model`. The catalog
+   * of valid values is agent-kind specific — see `agent/models.ts`. `undefined`
+   * or the `'default'` sentinel means "don't pass `--model`" so the agent
+   * CLI / account default applies. Default: unset.
+   */
+  model?: string;
+  /**
+   * Whether to send a separate Lark COT process message before the final
+   * answer. `brief` mirrors the lightweight tool/progress visibility from
+   * the legacy tool display; `detailed` also includes tool args/output.
+   * Legacy boolean/string `on` is accepted by the resolver for upgrades.
+   */
+  cotMessages?: CotMessagesMode | 'on' | 'simple';
   /**
    * Cap on concurrent claude runs across all chats / topics. Excess runs
    * queue FIFO. Default 10. Mostly relevant for topic groups where each
@@ -156,11 +174,6 @@ export interface AppPreferences {
    * supports none/minimal/low/medium/high/xhigh, plus max on GPT-5.6 models.
    */
   effort?: string;
-  /**
-   * Optional agent model id. Claude profiles apply Claude aliases before
-   * passing `--model`; Codex profiles pass the raw model id through.
-   */
-  model?: string;
 }
 
 /**
@@ -223,6 +236,13 @@ export function getMessageReplyMode(cfg: AppConfig): MessageReplyMode {
 /** Resolve the show-tool-calls preference with default fallback. */
 export function getShowToolCalls(cfg: AppConfig): boolean {
   return cfg.preferences?.showToolCalls !== false;
+}
+
+export function getCotMessages(cfg: AppConfig): CotMessagesMode {
+  const raw = cfg.preferences?.cotMessages;
+  if (raw === 'brief' || raw === 'simple') return 'brief';
+  if (raw === 'detailed' || raw === 'on') return 'detailed';
+  return 'off';
 }
 
 /** Resolve the max-concurrent-runs preference with default + sanity clamp. */

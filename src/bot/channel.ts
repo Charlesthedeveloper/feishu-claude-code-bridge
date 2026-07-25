@@ -6,11 +6,13 @@ import type {
 import { createLarkChannel } from '@larksuite/channel';
 import { dirname, join } from 'node:path';
 import { claudeCapability, codexCapability } from '../agent/capability';
+import { DEFAULT_MODEL, modelLabel, resolveModelArg } from '../agent/models';
 import {
   buildAgentPrompt,
   type BridgePromptInteractiveCard,
   type BridgePromptMention,
   type BridgePromptQuotedMessage,
+  type BridgePromptTopicMessage,
 } from '../agent/prompt';
 import type { AgentAdapter, AgentEvent } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
@@ -32,9 +34,9 @@ import {
   getAgentEffortForAgent,
   getAgentModelForAgent,
   getAgentStopGraceMs,
+  getCotMessages,
   getMaxConcurrentRuns,
   getMessageReplyMode,
-  getRequireMentionInGroup,
   getRunIdleTimeoutMs,
   getShowToolCalls,
 } from '../config/schema';
@@ -45,7 +47,7 @@ import {
   toPolicyAttachment,
   toPromptAttachment,
 } from '../media/attachment';
-import { canUseDm, canUseGroup } from '../policy/access';
+import { canUseDm, canUseGroup, requireMentionForChat } from '../policy/access';
 import type { ScopeContext } from '../policy/run-policy';
 import { createOwnerRefreshController } from '../policy/owner';
 import { RunExecutor } from '../runtime/run-executor';
@@ -61,10 +63,17 @@ import { commandSessionCatalogIdentity } from './session-catalog-identity';
 import { startKeepalive } from './keepalive';
 import { PendingQueue } from './pending-queue';
 import { ProcessPool } from './process-pool';
-import { fetchQuotedContext, type QuotedContext } from './quote';
+import { fetchQuotedContext, fetchTopicContext, type QuotedContext } from './quote';
+import { lookupMessageThreadId } from './thread-id';
 import { addWorkingReaction, removeReaction } from './reaction';
 import { fetchKnownChats } from './lark-info';
 import type { AppPaths } from '../config/app-paths';
+import {
+  consumeCotEvents,
+  CotClient,
+  CotPublisher,
+  finalAnswerOnlyState,
+} from './cot';
 
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
@@ -206,6 +215,25 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       })
     : undefined;
   const activePolicyFingerprints = new Map<string, string>();
+  // Per-scope record of the model used on the last run, so a `/config` model
+  // switch can inject a one-time "model changed" note into the next (resumed)
+  // prompt. In-memory only: on restart the first run re-seeds silently.
+  const lastRunModelByScope = new Map<string, string>();
+  const cotClient = new CotClient({
+    tenant: cfg.accounts.app.tenant,
+    appId: cfg.accounts.app.id,
+    appSecret,
+  });
+  const threadModeOverrideWarnedChats = new Set<string>();
+  const logThreadModeOverride: LogThreadModeOverride = ({ chatId, resolvedMode, threadId }) => {
+    const fields = { chatId, cachedMode: resolvedMode, threadId };
+    if (threadModeOverrideWarnedChats.has(chatId)) {
+      log.info('chat', 'mode-overridden-by-thread', fields);
+      return;
+    }
+    threadModeOverrideWarnedChats.add(chatId);
+    log.warn('chat', 'mode-overridden-by-thread', fields);
+  };
 
   const opts: LarkChannelOptions = {
     appId: cfg.accounts.app.id,
@@ -261,9 +289,28 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     if (!firstMsg) return;
     pending.block(scope);
     void withTrace({ chatId: firstMsg.chatId }, async () => {
-      log.info('flush', 'start', { scope, batchSize: batch.length });
+      log.info('flush', 'start', {
+        scope,
+        batchSize: batch.length,
+        chatId: firstMsg.chatId,
+        threadId: firstMsg.threadId,
+        msgId: firstMsg.messageId,
+      });
       try {
-        const mode = await chatModeCache.resolve(channel, firstMsg.chatId);
+        const resolvedMode = await chatModeCache.resolve(channel, firstMsg.chatId);
+        // Feishu/Lark converted topic groups may still resolve as `group` from
+        // the chat info API/cache, while message events already carry threadId.
+        // Treat threadId as authoritative for IM messages so scope and replies
+        // stay isolated per topic.
+        const mode = firstMsg.threadId ? 'topic' : resolvedMode;
+        if (firstMsg.threadId && resolvedMode !== 'topic') {
+          chatModeCache.invalidate(firstMsg.chatId);
+          logThreadModeOverride({
+            chatId: firstMsg.chatId,
+            resolvedMode,
+            threadId: firstMsg.threadId,
+          });
+        }
         await runAgentBatch({
           channel,
           executor,
@@ -273,8 +320,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           media,
           batch,
           controls,
+          cotClient,
           callbackAuth,
           activePolicyFingerprints,
+          lastRunModelByScope,
           scope,
           mode,
         });
@@ -321,6 +370,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           msg,
           controls,
           chatModeCache,
+          logThreadModeOverride,
           executor,
           pool,
           externalBotWatcher,
@@ -505,6 +555,40 @@ async function sendNonAllowedGroupHint(
   }
 }
 
+/**
+ * The SDK (@larksuite/channel >= 0.4.1) normalizes a merge_forward whose
+ * sub-messages it could not fetch — after its own retries — to this exact
+ * sentinel, rather than the empty `<forwarded_messages/>` it emits for a
+ * genuinely empty forward. Distinguishing the two is the whole point of that
+ * fix: pre-0.4.1 a transient Feishu 5xx/timeout on `im.v1.message.get` was
+ * silently indistinguishable from empty, so the agent saw an empty forward and
+ * replied "转发内容是空的，请重新转发一次".
+ */
+const FORWARD_FETCH_FAILED_CONTENT = '<forwarded_messages status="fetch_failed"/>';
+
+/** True when a message is a merge_forward the SDK failed to fetch (see above). */
+function isForwardFetchFailed(msg: NormalizedMessage): boolean {
+  return (
+    msg.rawContentType === 'merge_forward' &&
+    msg.content.trim() === FORWARD_FETCH_FAILED_CONTENT
+  );
+}
+
+async function sendForwardFetchFailedHint(
+  channel: LarkChannel,
+  chatId: string,
+  replyToMessageId: string,
+): Promise<void> {
+  const text =
+    '这条合并转发的内容没能从飞书拉取到（上游超时/网络抖动，已自动重试仍失败），' +
+    '所以我没收到里面的消息。麻烦稍后重新转发一次。';
+  try {
+    await channel.send(chatId, { text }, { replyTo: replyToMessageId });
+  } catch {
+    await channel.send(chatId, { text });
+  }
+}
+
 interface IntakeDeps {
   channel: LarkChannel;
   agent: AgentAdapter;
@@ -516,10 +600,17 @@ interface IntakeDeps {
   msg: NormalizedMessage;
   controls: Controls;
   chatModeCache: ChatModeCache;
+  logThreadModeOverride: LogThreadModeOverride;
   executor: RunExecutor;
   pool: ProcessPool;
   externalBotWatcher: ExternalBotWatcher;
 }
+
+type LogThreadModeOverride = (input: {
+  chatId: string;
+  resolvedMode: ChatMode;
+  threadId: string;
+}) => void;
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
   const {
@@ -533,6 +624,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     msg,
     controls,
     chatModeCache,
+    logThreadModeOverride,
     executor,
     pool,
     externalBotWatcher,
@@ -540,14 +632,51 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
   // downstream consumer keys off these.
-  const chatMode = await chatModeCache.resolve(channel, msg.chatId);
-  const scope = chatMode === 'topic' && msg.threadId
-    ? `${msg.chatId}:${msg.threadId}`
+  const resolvedMode = await chatModeCache.resolve(channel, msg.chatId);
+  // Feishu delivers a sizable fraction of topic-group message events without a
+  // `thread_id` (notably the message that opens a new topic). We route topic
+  // replies (`replyInThread`) and isolate per-topic session scope off it, so a
+  // missing one makes the reply escape into a brand-new topic AND collapses the
+  // scope to the chat level. When getChatMode says this is a topic group but
+  // the event dropped `thread_id`, backfill it from the raw message — the same
+  // recovery the card-click path uses.
+  let threadId = msg.threadId;
+  if (!threadId && resolvedMode === 'topic') {
+    threadId = await lookupMessageThreadId(channel, msg.messageId);
+    if (threadId) {
+      log.info('intake', 'thread-id-backfilled', {
+        chatId: msg.chatId,
+        msgId: msg.messageId,
+        threadId,
+      });
+    }
+  }
+  // Carry the (possibly backfilled) threadId on the message so the batched
+  // flush — which reads `firstMsg.threadId` for reply routing and topic scope —
+  // sees it.
+  const emsg: NormalizedMessage = threadId === msg.threadId ? msg : { ...msg, threadId };
+  // Some groups are converted into topic groups after creation. In that state
+  // getChatMode can lag behind the message event shape, so threadId is the
+  // stronger signal for topic-scoped sessions and reply routing.
+  const chatMode = threadId ? 'topic' : resolvedMode;
+  if (threadId && resolvedMode !== 'topic') {
+    chatModeCache.invalidate(msg.chatId);
+    logThreadModeOverride({
+      chatId: msg.chatId,
+      resolvedMode,
+      threadId,
+    });
+  }
+  const scope = chatMode === 'topic' && threadId
+    ? `${msg.chatId}:${threadId}`
     : msg.chatId;
   log.info('intake', 'enter', {
     scope,
     chatType: msg.chatType,
     chatMode,
+    resolvedMode,
+    threadId,
+    msgId: msg.messageId,
     sender: msg.senderId,
     preview,
     resources: msg.resources.length,
@@ -588,22 +717,42 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
 
   // Group-mention policy. p2p is always unrestricted; in groups (regular and
   // topic) we drop messages that don't @bot when the user has opted into the
-  // quiet-by-default behavior. Slash commands are NOT exempt — the user
-  // chose strict mode so the group stays uniformly quiet unless mentioned.
-  // @全员 is already filtered by SDK (`respondToMentionAll: false`), so any
-  // event reaching here is either targeted or undirected chatter.
+  // quiet-by-default behavior. A per-chat override (set from /config's group
+  // picker) takes priority over the global setting, so one group can respond
+  // to everything while others stay @-only (or vice versa). Slash commands are
+  // NOT exempt — the user chose strict mode so the group stays uniformly quiet
+  // unless mentioned. @全员 is already filtered by SDK
+  // (`respondToMentionAll: false`), so any event reaching here is either
+  // targeted or undirected chatter.
   if (
     msg.chatType !== 'p2p' &&
-    getRequireMentionInGroup(controls.cfg) &&
+    requireMentionForChat(controls.profileConfig, controls.cfg, msg.chatId) &&
     !msg.mentionedBot
   ) {
     log.info('intake', 'skip-no-mention', { scope, chatType: msg.chatType });
     return;
   }
 
+  // A merge_forward whose sub-messages the SDK could not fetch (transient
+  // upstream failure, already retried inside @larksuite/channel) arrives as the
+  // fetch_failed sentinel. Feeding it to the agent would read as an empty
+  // forward, so surface a recoverable hint and skip the run — the user can
+  // resend once the upstream recovers.
+  if (isForwardFetchFailed(emsg)) {
+    log.warn('intake', 'forward-fetch-failed', {
+      scope,
+      msgId: emsg.messageId,
+      chatType: emsg.chatType,
+    });
+    await sendForwardFetchFailedHint(channel, emsg.chatId, emsg.messageId).catch((err) =>
+      log.warn('intake', 'forward-fetch-failed-hint-failed', { err: String(err) }),
+    );
+    return;
+  }
+
   const handled = await tryHandleCommand({
     channel,
-    msg,
+    msg: emsg,
     scope,
     chatMode,
     sessions,
@@ -612,7 +761,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     activeRuns,
     sessionCatalog,
     sessionCatalogIdentity: await commandSessionCatalogIdentity({
-      msg,
+      msg: emsg,
       scope,
       mode: chatMode,
       workspaces,
@@ -629,7 +778,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     return;
   }
 
-  const size = pending.push(scope, msg);
+  const size = pending.push(scope, emsg);
   log.info('intake', 'queued', { scope, queueSize: size, debounceMs: DEBOUNCE_MS });
 }
 
@@ -642,8 +791,10 @@ interface RunBatchDeps {
   media: MediaCache;
   batch: NormalizedMessage[];
   controls: Controls;
+  cotClient: CotClient;
   callbackAuth?: CallbackAuth;
   activePolicyFingerprints: Map<string, string>;
+  lastRunModelByScope: Map<string, string>;
   scope: string;
   mode: ChatMode;
 }
@@ -658,8 +809,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     media,
     batch,
     controls,
+    cotClient,
     callbackAuth,
     activePolicyFingerprints,
+    lastRunModelByScope,
     scope,
     mode,
   } = deps;
@@ -713,8 +866,65 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
   }
 
-  const prompt = buildPrompt(batch, attachments, quotes, channel.botIdentity);
-  log.info('prompt', 'built', { promptChars: prompt.length, quotes: quotes.length });
+  // Topic upstream context. When the bot is pulled into a topic for the FIRST
+  // time (no session yet for this scope), the topic's earlier messages — the
+  // root question that may never have @-mentioned the bot, plus prior replies —
+  // live nowhere the agent can see them. Fetch them so it isn't blind to what
+  // the user is pointing at. An already-engaged topic keeps that history in its
+  // resumed session, so we skip the fetch there.
+  let topicContext: QuotedContext[] = [];
+  if (mode === 'topic' && threadId && !sessions.getRaw(scope)) {
+    const exclude = new Set([...batchIds, ...quoteTargets]);
+    topicContext = await fetchTopicContext(channel, threadId, {
+      maxMessages: 40,
+      excludeIds: exclude,
+    });
+    if (topicContext.length > 0) {
+      log.info('topic', 'context-fetched', {
+        scope,
+        threadId,
+        count: topicContext.length,
+      });
+    }
+  }
+
+  // Detect a model switch since this scope's last run. When resuming an
+  // existing conversation the transcript still claims the old model, so tell
+  // the (now-switched) agent its model changed — otherwise it keeps echoing
+  // the previously-announced model. Only fires when a prior model was seen
+  // for this scope (never on the first run) and the selection actually
+  // changed. `requestedModel` (the `--model` value, or undefined for default)
+  // is reused below to log requested-vs-actual against the init event.
+  const agentKind = controls.profileConfig.agentKind;
+  const modelPref =
+    sessions.getModel(scope) ??
+    getAgentModelForAgent(controls.cfg, controls.profileConfig.agentKind);
+  const requestedModel = resolveModelArg(agentKind, modelPref);
+  const modelSelection = requestedModel ?? DEFAULT_MODEL;
+  const prevModel = lastRunModelByScope.get(scope);
+  const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
+  lastRunModelByScope.set(scope, modelSelection);
+  const extraInstructions = modelSwitched
+    ? [
+        `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
+          '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
+      ]
+    : undefined;
+
+  const prompt = buildPrompt(
+    batch,
+    attachments,
+    quotes,
+    topicContext,
+    channel.botIdentity,
+    extraInstructions,
+  );
+  log.info('prompt', 'built', {
+    promptChars: prompt.length,
+    quotes: quotes.length,
+    topicContext: topicContext.length,
+    ...(modelSwitched ? { modelSwitchedTo: modelSelection } : {}),
+  });
 
   // For topic groups: thread the reply so it lands in the same topic as the
   // user's message. Otherwise the SDK posts at top level and the user's
@@ -723,6 +933,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     replyTo: lastMsg.messageId,
     ...(mode === 'topic' && threadId ? { replyInThread: true } : {}),
   };
+  log.info('flush', 'reply-target', {
+    scope,
+    mode,
+    chatId,
+    threadId,
+    replyTo: sendOpts.replyTo,
+    replyInThread: sendOpts.replyInThread === true,
+  });
 
   const accessDecision =
     firstMsg.chatType === 'p2p'
@@ -797,6 +1015,16 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     if (evt.type === 'system' && evt.sessionId) {
       log.info('session', 'set', { sessionId: evt.sessionId });
     }
+    // Ground truth for "which model is actually running": claude reports the
+    // model it loaded in its init event. Logging requested-vs-actual reveals
+    // whether the --model pin took effect or claude silently fell back (e.g.
+    // an id this claude build/account doesn't recognize).
+    if (evt.type === 'system' && evt.model) {
+      log.info('session', 'model', {
+        requested: requestedModel ?? 'default',
+        actual: evt.model,
+      });
+    }
     if (evt.type === 'system' && evt.threadId) {
       log.info('session', 'set-thread', { threadId: evt.threadId });
     }
@@ -817,6 +1045,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
   const replyMode = getMessageReplyMode(controls.cfg);
   log.info('flush', 'reply-mode', { mode: replyMode });
+  const cotMessages = getCotMessages(controls.cfg);
+  const cotEnabled = cotMessages !== 'off';
 
   // Re-read prefs on every flush so toggling /config mid-stream takes
   // effect immediately. Cheap object lookups, no allocation when on.
@@ -844,9 +1074,60 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // Add a "Typing" reaction to the triggering message as an instant ack, but
   // never let that outbound API call block agent event draining.
   const reactionPromise =
-    replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
+    cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
 
   try {
+    if (cotEnabled) {
+      const cotPublisher = new CotPublisher({
+        client: cotClient,
+        chatId,
+        // The CoT bubble follows this origin message's thread. In a topic the
+        // triggering message is itself in-topic, so the bubble lands in the
+        // topic; message_cot has no thread_id receive type, so origin is the
+        // only lever we have (see CotClient.create).
+        originMessageId: lastMsg.messageId,
+        runId: execution.runId,
+        scope,
+        inputPreview: lastMsg.content,
+      });
+      await cotPublisher.start();
+      if (!cotPublisher.disabled) {
+        const cotDone = consumeCotEvents(execution.subscribe(), cotPublisher, {
+          detail: cotMessages,
+        });
+        const finalState = await processAgentStream(
+          handle,
+          eventStream,
+          scope,
+          sessions,
+          idleTimeoutMs,
+          recordSession,
+          async () => {},
+        );
+        await cotDone;
+        if (cotPublisher.degradedReason) {
+          await sendCotDegradedNotice({
+            channel,
+            chatId,
+            scope,
+            sendOpts,
+            reason: cotPublisher.degradedReason,
+          });
+        }
+        await sendFinalReply({
+          channel,
+          chatId,
+          scope,
+          state: finalAnswerOnlyState(finalState),
+          replyMode,
+          sendOpts,
+          cardRenderOptions,
+        });
+        return;
+      }
+      log.warn('cot', 'fallback-existing-reply', { reason: 'create-disabled' });
+    }
+
     if (replyMode === 'card') {
       let latestState: RunState = initialState;
       let cardUpdateFailed = false;
@@ -924,19 +1205,49 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         },
         sendOpts,
       );
-      const streamOutcome = await awaitRenderAwareStream({
-        mode: replyMode,
-        streamDone,
-        renderDone,
-        producerStarted: () => producerStarted,
-        fallback: async (state) => {
-          await sendFinalTranscript(channel, chatId, state, sendOpts, '流式卡片启动失败，补发完整输出');
-        },
-      });
+      let streamOutcome:
+        | { fallbackSent: boolean; terminalGraceExpired: boolean }
+        | undefined;
+      try {
+        streamOutcome = await awaitRenderAwareStream({
+          mode: replyMode,
+          streamDone,
+          renderDone,
+          producerStarted: () => producerStarted,
+          fallback: async (state) => {
+            if (controls.profileConfig.agentKind === 'codex') return;
+            await sendFinalTranscript(
+              channel,
+              chatId,
+              state,
+              sendOpts,
+              '流式卡片启动失败，补发完整输出',
+            );
+          },
+        });
+      } catch (err) {
+        if (controls.profileConfig.agentKind !== 'codex') throw err;
+        log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
+      }
       const finalState = filterForPrefs(latestState);
-      if (
+      await recallIfEmptyStreamedReply(channel, streamDone, finalState, scope);
+      if (controls.profileConfig.agentKind === 'codex') {
+        await sendFinalReply({
+          channel,
+          chatId,
+          scope,
+          state: finalAnswerOnlyState(finalState),
+          replyMode,
+          sendOpts,
+          cardRenderOptions,
+        });
+      } else if (
+        streamOutcome &&
         !streamOutcome.fallbackSent &&
-        shouldSendFinalTranscript(finalState, cardUpdateFailed || streamOutcome.terminalGraceExpired)
+        shouldSendFinalTranscript(
+          finalState,
+          cardUpdateFailed || streamOutcome.terminalGraceExpired,
+        )
       ) {
         await sendFinalTranscript(
           channel,
@@ -1001,22 +1312,43 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         },
         sendOpts,
       );
-      const streamOutcome = await awaitRenderAwareStream({
-        mode: replyMode,
-        streamDone,
-        renderDone,
-        producerStarted: () => producerStarted,
-        fallback: async (state) => {
-          const body = renderText(filterForPrefs(state));
-          if (body.trim()) {
-            await sendMarkdownWithRetry(channel, chatId, body, sendOpts, {
-              mode: replyMode,
-              step: 'markdown-startup-fallback',
-            });
-          }
-        },
-      });
-      if (!streamOutcome.fallbackSent && markdownUpdateFailed) {
+      let streamOutcome:
+        | { fallbackSent: boolean; terminalGraceExpired: boolean }
+        | undefined;
+      try {
+        streamOutcome = await awaitRenderAwareStream({
+          mode: replyMode,
+          streamDone,
+          renderDone,
+          producerStarted: () => producerStarted,
+          fallback: async (state) => {
+            if (controls.profileConfig.agentKind === 'codex') return;
+            const body = renderText(filterForPrefs(state));
+            if (body.trim()) {
+              await sendMarkdownWithRetry(channel, chatId, body, sendOpts, {
+                mode: replyMode,
+                step: 'markdown-startup-fallback',
+              });
+            }
+          },
+        });
+      } catch (err) {
+        if (controls.profileConfig.agentKind !== 'codex') throw err;
+        log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
+      }
+      const finalState = filterForPrefs(latestState);
+      await recallIfEmptyStreamedReply(channel, streamDone, finalState, scope);
+      if (controls.profileConfig.agentKind === 'codex') {
+        await sendFinalReply({
+          channel,
+          chatId,
+          scope,
+          state: finalAnswerOnlyState(finalState),
+          replyMode,
+          sendOpts,
+          cardRenderOptions,
+        });
+      } else if (streamOutcome && !streamOutcome.fallbackSent && markdownUpdateFailed) {
         const body = renderText(filterForPrefs(latestState));
         if (body.trim()) {
           await sendMarkdownWithRetry(channel, chatId, body, sendOpts, {
@@ -1038,13 +1370,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         recordSession,
         async () => {},
       );
-      const body = renderText(filterForPrefs(finalState));
-      if (body.trim()) {
-        await sendMarkdownWithRetry(channel, chatId, body, sendOpts, {
-          mode: replyMode,
-          step: 'text-final',
-        });
-      }
+      await sendFinalReply({
+        channel,
+        chatId,
+        scope,
+        state:
+          controls.profileConfig.agentKind === 'codex'
+            ? finalAnswerOnlyState(filterForPrefs(finalState))
+            : filterForPrefs(finalState),
+        replyMode,
+        sendOpts,
+        cardRenderOptions,
+      });
     }
   } catch (err) {
     log.fail('stream', err);
@@ -1052,6 +1389,138 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     activePolicyFingerprints.delete(scope);
     scheduleWorkingReactionCleanup(channel, lastMsg.messageId, reactionPromise);
   }
+}
+
+/**
+ * The SDK creates the streaming card eagerly (before any content arrives), so a
+ * run that produces no text leaves a card the SDK fills with its "(no content)"
+ * placeholder. When the final render has nothing to show — a clean `done` with
+ * no text; error/interrupt/timeout keep it non-empty via their notices — recall
+ * that empty message instead of leaving noise in the chat.
+ *
+ * `finalState` must already be `filterForPrefs`-projected (what the user sees).
+ */
+async function recallIfEmptyStreamedReply(
+  channel: LarkChannel,
+  streamDone: Promise<unknown>,
+  finalState: RunState,
+  scope: string,
+): Promise<void> {
+  if (renderText(finalState).trim() !== '') return;
+  const result = (await streamDone.catch(() => undefined)) as { messageId?: string } | undefined;
+  const messageId = result?.messageId;
+  if (!messageId) return;
+  try {
+    await channel.recallMessage(messageId);
+    log.info('outbound', 'recall-empty', { scope, messageId });
+  } catch (err) {
+    log.warn('outbound', 'recall-empty-failed', {
+      scope,
+      messageId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+async function sendFinalReply(input: {
+  channel: LarkChannel;
+  chatId: string;
+  scope: string;
+  state: RunState;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+  sendOpts: { replyTo: string; replyInThread?: boolean };
+  cardRenderOptions: { signCallback?: (action: string) => string };
+}): Promise<void> {
+  const body = renderText(input.state);
+
+  // Nothing deliverable to send (agent produced no text on a clean finish;
+  // error/interrupt/timeout keep `body` non-empty via their notices). Skip
+  // rather than post an empty card that renders as "(no content)".
+  if (!body.trim()) {
+    log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
+    return;
+  }
+
+  if (input.replyMode === 'card') {
+    const result = await input.channel.send(
+      input.chatId,
+      { card: renderCard(input.state, input.cardRenderOptions) },
+      input.sendOpts,
+    );
+    requireMessageReceipt(result, 'card');
+    log.info('outbound', 'sent', outboundLogFields(input, 'card', body, result));
+  } else if (input.replyMode === 'markdown') {
+    if (body.trim()) {
+      const result = await input.channel.send(
+        input.chatId,
+        { markdown: body },
+        input.sendOpts,
+      );
+      requireMessageReceipt(result, 'markdown');
+      log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
+    }
+  } else if (body.trim()) {
+    const result = await input.channel.send(
+      input.chatId,
+      { markdown: body },
+      input.sendOpts,
+    );
+    requireMessageReceipt(result, 'text');
+    log.info('outbound', 'sent', outboundLogFields(input, 'text', body, result));
+  }
+}
+
+function requireMessageReceipt(result: { messageId?: string }, type: string): void {
+  if (!result.messageId?.trim()) {
+    throw new Error(`final ${type} reply missing message receipt`);
+  }
+}
+
+async function sendCotDegradedNotice(input: {
+  channel: LarkChannel;
+  chatId: string;
+  scope: string;
+  sendOpts: { replyTo: string; replyInThread?: boolean };
+  reason: string;
+}): Promise<void> {
+  log.warn('cot', 'degraded', {
+    scope: input.scope,
+    reason: input.reason,
+    replyInThread: input.sendOpts.replyInThread === true,
+  });
+  try {
+    await input.channel.send(
+      input.chatId,
+      { markdown: 'COT 过程消息更新失败，已停止展示过程；最终答案仍会继续发送。' },
+      input.sendOpts,
+    );
+  } catch (err) {
+    log.warn('cot', 'degraded-notice-failed', {
+      scope: input.scope,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+function outboundLogFields(
+  input: {
+    scope?: string;
+    replyMode: ReturnType<typeof getMessageReplyMode>;
+    sendOpts?: { replyTo?: string; replyInThread?: boolean };
+  },
+  type: string,
+  body: string,
+  result?: { messageId?: string },
+): Record<string, unknown> {
+  return {
+    type,
+    scope: input.scope,
+    mode: input.replyMode,
+    chars: body.length,
+    messageId: result?.messageId,
+    replyTo: input.sendOpts?.replyTo,
+    replyInThread: input.sendOpts?.replyInThread === true,
+  };
 }
 
 /**
@@ -1178,7 +1647,7 @@ async function processAgentStream(
       await sessions.flush();
     }
   }
-  log.info('card', 'final', { terminal: state.terminal, interrupted: handle.interrupted });
+  log.info('card', 'final', { scope, terminal: state.terminal, interrupted: handle.interrupted });
   reportMetric('run_e2e_ms', Date.now() - runStart, { terminal: state.terminal });
   await flush(state);
   if (handle.interrupted) {
@@ -1414,7 +1883,9 @@ function buildPrompt(
   batch: NormalizedMessage[],
   attachments: LocalAttachment[],
   quotes: QuotedContext[] = [],
+  topicContext: QuotedContext[] = [],
   botIdentity?: { openId: string; name?: string },
+  extraInstructions?: string[],
 ): string {
   const first = batch[0];
   if (!first) return '';
@@ -1454,8 +1925,12 @@ function buildPrompt(
       messageIds: batch.map((m) => m.messageId),
       source: 'im',
     },
-    instructions: BRIDGE_AGENT_INSTRUCTIONS,
+    instructions:
+      extraInstructions && extraInstructions.length > 0
+        ? [...BRIDGE_AGENT_INSTRUCTIONS, ...extraInstructions]
+        : BRIDGE_AGENT_INSTRUCTIONS,
     userInput: userPart,
+    ...(topicContext.length > 0 ? { topicContext: topicContext.map(toPromptTopicMessage) } : {}),
     quotedMessages: quotes.map(toPromptQuote),
     interactiveCards: batch.map(toPromptInteractiveCard).filter(isDefined),
     attachments: attachments.map(toPromptAttachment),
@@ -1537,6 +2012,18 @@ function toPromptQuote(q: QuotedContext): BridgePromptQuotedMessage {
     messageId: q.messageId,
     senderId: q.senderId,
     ...(q.senderName ? { senderName: q.senderName } : {}),
+    ...(q.createdAt ? { createdAt: q.createdAt } : {}),
+    rawContentType: q.rawContentType,
+    content: q.content,
+  };
+}
+
+function toPromptTopicMessage(q: QuotedContext): BridgePromptTopicMessage {
+  return {
+    messageId: q.messageId,
+    senderId: q.senderId,
+    ...(q.senderName ? { senderName: q.senderName } : {}),
+    ...(q.senderType ? { senderType: q.senderType } : {}),
     ...(q.createdAt ? { createdAt: q.createdAt } : {}),
     rawContentType: q.rawContentType,
     content: q.content,

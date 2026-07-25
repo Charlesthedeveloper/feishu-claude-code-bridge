@@ -22,6 +22,13 @@ export interface ProfileAccess {
   allowedChats: string[];
   admins: string[];
   requireMentionInGroup: boolean;
+  /**
+   * Per-chat override of {@link requireMentionInGroup}, keyed by chat_id.
+   * `true` = require an @-mention in that chat, `false` = respond to every
+   * message. A chat absent from the map follows the global setting. Takes
+   * priority over `requireMentionInGroup` for the chats it lists.
+   */
+  chatRequireMention?: Record<string, boolean>;
 }
 
 export interface SandboxConfig {
@@ -57,6 +64,20 @@ export type CommentConfig = Record<string, never>;
 
 export type LarkCliIdentityPreset = 'bot-only' | 'user-default';
 
+/**
+ * Deployment mode — a single switch that binds two behaviors together
+ * (see the "团队版 Bot 权限调整" spec):
+ *   - `personal` (default, the status quo): only owner + allowlisted
+ *     users/chats can use the bot; the CLI may carry owner's personal (user)
+ *     authorization per {@link LarkCliConfig.identityPreset}.
+ *   - `team`: anyone can @-use the bot (no allowlist gating), and the CLI is
+ *     forced to `bot-only` so it never carries owner's personal authorization.
+ *
+ * The two behaviors are intentionally bound to one switch, not two configs.
+ * Admin/sensitive commands stay owner/admin-gated in both modes.
+ */
+export type ProfileMode = 'personal' | 'team';
+
 export type LarkCliUserImportStatus =
   | 'not-needed'
   | 'imported'
@@ -77,6 +98,8 @@ export interface LarkCliConfig {
 export interface ProfileConfig {
   schemaVersion: 2;
   agentKind: AgentKind;
+  /** Deployment mode switch. Default 'personal'. See {@link ProfileMode}. */
+  mode: ProfileMode;
   accounts: {
     app: AppCredentials;
   };
@@ -95,6 +118,20 @@ export interface ProfileConfig {
   larkCli: LarkCliConfig;
 }
 
+/**
+ * The lark-cli identity preset that actually takes effect, after applying the
+ * deployment-mode override. Team mode forces `bot-only` regardless of the
+ * user's stored {@link LarkCliConfig.identityPreset} (which is preserved so it
+ * comes back into effect when switching back to personal mode). This is the
+ * single source of truth for "team mode forces bot-only" — every place that
+ * applies the lark-cli identity policy should read through here.
+ */
+export function effectiveLarkCliIdentity(
+  profile: Pick<ProfileConfig, 'mode' | 'larkCli'>,
+): LarkCliIdentityPreset {
+  return profile.mode === 'team' ? 'bot-only' : profile.larkCli.identityPreset;
+}
+
 export interface RootConfig {
   schemaVersion: 2;
   activeProfile: string;
@@ -108,6 +145,8 @@ export interface RootConfig {
 
 export interface CreateDefaultProfileConfigInput {
   agentKind: AgentKind;
+  /** Deployment mode. Default 'personal'. */
+  mode?: ProfileMode;
   accounts: {
     app: AppCredentials;
   };
@@ -135,6 +174,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const raw = input as {
     schemaVersion?: unknown;
     agentKind?: unknown;
+    mode?: unknown;
     accounts?: unknown;
     secrets?: SecretsConfig;
     preferences?: (AppPreferences & { access?: Partial<ProfileAccess> }) | undefined;
@@ -183,6 +223,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   return {
     schemaVersion: 2,
     agentKind: raw.agentKind,
+    mode: raw.mode === 'team' ? 'team' : 'personal',
     accounts,
     ...(raw.secrets ? { secrets: raw.secrets } : {}),
     preferences,
@@ -249,12 +290,25 @@ function normalizeAccess(
   access: Partial<ProfileAccess> | undefined,
   legacyRequireMentionInGroup: boolean | undefined,
 ): ProfileAccess {
+  const chatRequireMention = normalizeChatMentionMap(access?.chatRequireMention);
   return {
     allowedUsers: stringArray(access?.allowedUsers),
     allowedChats: stringArray(access?.allowedChats),
     admins: stringArray(access?.admins),
     requireMentionInGroup: access?.requireMentionInGroup ?? legacyRequireMentionInGroup ?? true,
+    // Omit when empty so configs without per-chat overrides stay clean.
+    ...(Object.keys(chatRequireMention).length > 0 ? { chatRequireMention } : {}),
   };
+}
+
+/** Keep only string→boolean entries; drop anything malformed. */
+function normalizeChatMentionMap(input: unknown): Record<string, boolean> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: Record<string, boolean> = {};
+  for (const [chatId, value] of Object.entries(input as Record<string, unknown>)) {
+    if (chatId && typeof value === 'boolean') out[chatId] = value;
+  }
+  return out;
 }
 
 function normalizeWorkspaces(input: {

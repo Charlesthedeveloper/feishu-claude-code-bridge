@@ -1,13 +1,19 @@
+import { modelLabel, supportedModels } from '../agent/models';
 import type { KnownChat } from '../bot/lark-info';
-import type { AgentKind, LarkCliIdentityPreset } from '../config/profile-schema';
-import type { AgentEffort, MessageReplyMode } from '../config/schema';
+import type { AgentKind, LarkCliIdentityPreset, ProfileMode } from '../config/profile-schema';
+import type { AgentEffort, CotMessagesMode, MessageReplyMode } from '../config/schema';
 
 export interface ConfigFormOpts {
+  /** Profile's agent kind — decides which model catalog the picker shows. */
   agentKind: AgentKind;
+  /** Deployment mode: 'personal' (default) or 'team'. */
+  mode: ProfileMode;
+  /** Current model selection (a value from {@link supportedModels}). */
+  model: string;
   messageReply: MessageReplyMode;
   showToolCalls: boolean;
+  cotMessages: CotMessagesMode;
   maxConcurrentRuns: number;
-  model?: string;
   /** 0 means "disabled". */
   runIdleTimeoutMinutes: number;
   effort: AgentEffort;
@@ -17,6 +23,9 @@ export interface ConfigFormOpts {
   allowedChats: string[];
   admins: string[];
   knownChats: KnownChat[];
+  /** URL of the running local web console (supervisor `--web-ui` mode). Shown
+   * at the top of the card when present; omitted when no console is running. */
+  consoleUrl?: string;
 }
 
 function collapsedAccessPanel(title: string, elements: object[]): object {
@@ -56,12 +65,14 @@ function chatList(chatIds: string[], knownChats: KnownChat[]): string {
 
 /** Form card for `/config`. */
 export function configFormCard(opts: ConfigFormOpts): object {
-  const modelLabel = opts.agentKind === 'codex' ? '默认 Codex model' : '默认 Claude model';
+  const modelOptions = supportedModels(opts.agentKind);
+  if (!modelOptions.some((model) => model.value === opts.model)) {
+    modelOptions.push({ value: opts.model, label: `自定义：${opts.model}` });
+  }
   const modelHelp =
     opts.agentKind === 'codex'
-      ? '_例如 `gpt-5.6`（自动使用完整 `gpt-5.6-sol`）、`gpt-5.6-terra`、`gpt-5.6-luna`。留空 = Codex CLI 默认模型_'
-      : '_例如 `opus5`（固定 Opus 5）、`sonnet5`、`fable5`、`best`。留空 = Claude Code 账号默认模型_';
-  const modelPlaceholder = opts.agentKind === 'codex' ? 'gpt-5.6' : 'opus5';
+      ? '_GPT-5.6 Sol 是当前推荐项；也可在聊天中用 `/model <model-id>` 临时选择其他或未来模型。_'
+      : '_Opus 5 是当前推荐默认；Fable 5 适合最高复杂度任务，Sonnet 5 适合高效日常任务。每个 chat 可用 `/model` 单独覆盖。_';
   const effortHelp =
     opts.agentKind === 'codex'
       ? '_控制 Codex `model_reasoning_effort`；快速聊天用 none/minimal，复杂代码/研究用 high/xhigh，GPT-5.6 可用 max_'
@@ -75,7 +86,20 @@ export function configFormCard(opts: ConfigFormOpts): object {
     : opts.agentKind === 'codex'
       ? 'medium'
       : 'high';
+  const teamMode = opts.mode === 'team';
+  const teamOverrideNote =
+    '\n\n_⚠️ 团队版已开启：本项被覆盖 —— 身份强制为「只允许应用身份」、访问控制不生效。切回个人版后恢复。_';
   const accessElements: object[] = [
+    ...(teamMode
+      ? [
+          {
+            tag: 'markdown',
+            content:
+              '_⚠️ **团队版已开启**：访问控制暂不生效 —— 任何人 @ bot 都能使用（管理命令仍限 owner/管理员）。切回个人版后以下白名单恢复生效。_',
+          },
+          { tag: 'hr' },
+        ]
+      : []),
     {
       tag: 'markdown',
       content: '_控制谁能通过私聊和群聊使用 bot。**留空 = 不响应聊天消息**。云文档评论按文档权限生效。_',
@@ -119,11 +143,55 @@ export function configFormCard(opts: ConfigFormOpts): object {
             '⚙️ **偏好设置**\n\n' +
             '调整 bot 的行为偏好。改完点提交后写入当前 profile 配置；消息和访问控制设置立即生效。',
         },
+        ...(opts.consoleUrl
+          ? [
+              {
+                tag: 'markdown',
+                content:
+                  `🖥️ **Web 控制台**（本机 127.0.0.1，可管理所有 profile 的启动/停止与配置）\n` +
+                  `[${opts.consoleUrl}](${opts.consoleUrl})`,
+              },
+            ]
+          : []),
         { tag: 'hr' },
         {
           tag: 'form',
           name: 'config_form',
           elements: [
+            {
+              tag: 'markdown',
+              content:
+                '**运行模式**\n' +
+                '_个人版(默认):Bot 是你一个人的助手,只有你和白名单用户能用,可携带你的个人授权访问文档/日历等_\n' +
+                '_团队版:Bot 是团队共用的助手,任何人 @ 即可使用(不做白名单校验);为避免他人借 Bot 动用你的个人权限,此模式下 CLI 强制只用应用(bot)身份,不使用个人授权_',
+            },
+            {
+              tag: 'select_static',
+              name: 'deploy_mode',
+              initial_option: opts.mode,
+              options: [
+                { text: { tag: 'plain_text', content: '个人版(默认)' }, value: 'personal' },
+                { text: { tag: 'plain_text', content: '团队版' }, value: 'team' },
+              ],
+            },
+            { tag: 'hr' },
+            {
+              tag: 'markdown',
+              content:
+                '**模型**\n' +
+                '_底层 agent 运行使用的模型_\n' +
+                `_「跟随默认」= 不指定,由 CLI/账号决定_\n${modelHelp}`,
+            },
+            {
+              tag: 'select_static',
+              name: 'model',
+              initial_option: opts.model,
+              options: modelOptions.map((m) => ({
+                text: { tag: 'plain_text', content: m.label },
+                value: m.value,
+              })),
+            },
+            { tag: 'hr' },
             {
               tag: 'markdown',
               content:
@@ -163,6 +231,24 @@ export function configFormCard(opts: ConfigFormOpts): object {
             {
               tag: 'markdown',
               content:
+                '\n**COT 过程消息**\n' +
+                '_关闭:只发送最终回复_\n' +
+                '_简略:展示 agent 过程文本和工具摘要_\n' +
+                '_详细:额外展示工具参数和输出摘要_',
+            },
+            {
+              tag: 'select_static',
+              name: 'cot_messages',
+              initial_option: opts.cotMessages,
+              options: [
+                { text: { tag: 'plain_text', content: '关闭' }, value: 'off' },
+                { text: { tag: 'plain_text', content: '简略' }, value: 'brief' },
+                { text: { tag: 'plain_text', content: '详细' }, value: 'detailed' },
+              ],
+            },
+            {
+              tag: 'markdown',
+              content:
                 '\n**并发上限**\n' +
                 '_全局同时运行的 agent 进程数(主要影响话题群多话题并行场景)_\n' +
                 '_默认 10,范围 1-50。超出的请求会 FIFO 排队_',
@@ -186,17 +272,6 @@ export function configFormCard(opts: ConfigFormOpts): object {
               name: 'run_idle_timeout_minutes',
               default_value: String(opts.runIdleTimeoutMinutes),
               placeholder: { tag: 'plain_text', content: '0' },
-              input_type: 'text',
-            },
-            {
-              tag: 'markdown',
-              content: `\n**${modelLabel}**\n${modelHelp}`,
-            },
-            {
-              tag: 'input',
-              name: 'model',
-              default_value: opts.model ?? '',
-              placeholder: { tag: 'plain_text', content: modelPlaceholder },
               input_type: 'text',
             },
             {
@@ -234,7 +309,8 @@ export function configFormCard(opts: ConfigFormOpts): object {
               content:
                 '\n**lark-cli 身份策略**\n' +
                 '_只允许应用身份:使用 bot/app 能力,不访问个人资源_\n' +
-                '_允许用户身份:保留应用身份,并允许已授权用户访问个人日历、邮箱、云盘等资源_',
+                '_允许用户身份:保留应用身份,并允许已授权用户访问个人日历、邮箱、云盘等资源_' +
+                (teamMode ? teamOverrideNote : ''),
             },
             {
               tag: 'select_static',
@@ -288,7 +364,6 @@ export function configFormCard(opts: ConfigFormOpts): object {
 }
 
 export function configSavedCard(opts: ConfigFormOpts): object {
-  const defaultModel = opts.agentKind === 'codex' ? 'Codex CLI default' : 'Claude Code default';
   const replyLabel =
     opts.messageReply === 'card'
       ? '交互卡片'
@@ -297,6 +372,7 @@ export function configSavedCard(opts: ConfigFormOpts): object {
         : '纯文本';
   const summarize = (list: string[]): string =>
     list.length === 0 ? '_(空)_' : `${list.length} 项`;
+  const cotLabel = cotMessagesLabel(opts.cotMessages);
   return {
     schema: '2.0',
     config: { summary: { content: '偏好已保存' } },
@@ -306,15 +382,19 @@ export function configSavedCard(opts: ConfigFormOpts): object {
           tag: 'markdown',
           content:
             '✅ **偏好已保存**\n\n' +
+            `**运行模式**:\`${opts.mode === 'team' ? '团队版' : '个人版'}\`\n` +
+            `**模型**:\`${modelLabel(opts.agentKind, opts.model)}\`\n` +
             `**消息回复方式**:${replyLabel}\n` +
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
+            `**COT 过程消息**:\`${cotLabel}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
-            `**默认 model**:\`${opts.model || defaultModel}\`\n` +
             `**默认 effort**:\`${opts.effort}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
-            `**lark-cli 身份策略**:\`${opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +
-            '🔒 **访问控制**\n' +
+            `**lark-cli 身份策略**:\`${opts.mode === 'team' ? '只允许应用身份(团队版强制)' : opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +
+            '🔒 **访问控制**' +
+            (opts.mode === 'team' ? '（_团队版下不生效,任何人可用_）' : '') +
+            '\n' +
             `**允许私聊的用户**:${summarize(opts.allowedUsers)}\n` +
             `**允许响应的群**:${summarize(opts.allowedChats)}\n` +
             `**管理员**:${summarize(opts.admins)}\n\n` +
@@ -323,6 +403,12 @@ export function configSavedCard(opts: ConfigFormOpts): object {
       ],
     },
   };
+}
+
+function cotMessagesLabel(value: CotMessagesMode): string {
+  if (value === 'brief') return '简略';
+  if (value === 'detailed') return '详细';
+  return '关闭';
 }
 
 /**

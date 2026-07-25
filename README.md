@@ -10,6 +10,7 @@ For a product walkthrough, see the [Feishu document](https://larkcommunity.feish
 
 - Forwards Feishu / Lark messages to local Claude Code or Codex CLI. Send a DM directly, or `@bot` in a group.
 - **Streaming card**: text replies and tool calls update on one Lark card in real time; long or failed card streams fall back to chunked final markdown so the run still lands with a clear completion marker.
+- **COT process messages**: optionally send a process message with agent progress text and tool calls, then send the final answer separately.
 - **Session continuity**: each chat, topic, or document comment thread keeps its own session.
 - **Queueing and batching**: messages sent in quick succession are handled together; messages sent during a run are queued for the next turn, while commands like `/new`, `/cd`, `/ws use`, and `/stop` can interrupt the current task.
 - **Multiple workspaces**: use `/cd` to switch the current project, and `/ws` to save and reuse common project directories.
@@ -167,7 +168,7 @@ DMs do not require an @ mention. Groups and topic groups require `@bot` by defau
 
 ### Local agent controls
 
-This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local controls that are useful for a personal Feishu bridge:
+This fork tracks upstream 0.6.1, including the local Web console, supervisor, personal/team deployment modes, per-chat mention controls, and COT process messages. It also keeps these local controls for Charles's personal Feishu bridge:
 
 - `/effort low|medium|high|xhigh|max|ultracode|auto`: in a Claude profile, changes the current chat/topic's Claude Code effort for future runs. `max` is Claude Code's deepest session-only reasoning setting. `ultracode` is sent as `--effort xhigh` plus Claude Code session settings for dynamic workflows, and is also session-only. `/effort auto` or `/effort default` removes the override and falls back to `/config` / the model default.
 - `/effort none|minimal|low|medium|high|xhigh|max`: in a Codex profile, changes the current chat/topic's Codex `model_reasoning_effort` for future runs. GPT-5.6 supports native `max`; older models may reject that level, so use `xhigh` when model compatibility is uncertain.
@@ -181,6 +182,16 @@ This fork keeps upstream 0.2.2's profile/Codex architecture and adds a few local
 - PAC/proxy split: macOS launchd does not inherit your terminal proxy settings. `start` and `restart` capture the current shell's `http_proxy` / `https_proxy` / `all_proxy` and `NO_PROXY` / `no_proxy` into the LaunchAgent plist for Claude/Codex child processes. The Feishu/Lark channel itself explicitly ignores those proxy variables and connects directly; this avoids persistent-WebSocket ping timeouts on proxy stacks that do not reliably honor `NO_PROXY`. After changing PAC/global/proxy settings, run `./bin/lark-channel-bridge.mjs restart --profile <name>` from a shell that has the desired agent proxy env.
 
 The local Claude profile defaults to `claude-opus-5` at `high` effort. Anthropic positions Opus 5 as the starting model for complex agentic coding and enterprise work, while Fable 5 remains the highest-capability tier. For quick personal chats like fitness logs or naming brainstorms, use `low` or `medium`; start coding and agentic work at `xhigh`; reserve `max` or `ultracode` for the hardest long-horizon work where unconstrained token spend is justified. Existing per-chat model and effort overrides continue to take precedence over the profile default.
+
+## Reply Display and COT
+
+`/config` controls three presentation settings:
+
+- **Message reply mode**: `message card` streams the final reply; `plain text` sends once after the run finishes.
+- **Tool-call display**: controls whether tool blocks appear in the final card / markdown reply.
+- **COT process message**: `off` sends only the final reply; `brief` first sends a COT message with agent progress text and tool summaries; `detailed` also includes tool args and truncated output.
+
+When COT is enabled, the bridge splits the process view and final answer into two messages. The COT message is for tracing what the agent did; the final answer is still generated from the agent's raw text, without heuristic bridge-side filtering. If an agent emits final-answer text as ordinary stream text, that text can also appear in the COT process message.
 
 ## lark-cli identity policy
 

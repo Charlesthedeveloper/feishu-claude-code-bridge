@@ -10,6 +10,7 @@
 
 - 在飞书私聊直接发消息，或在群里 `@bot`，把任务转给本机 Claude Code / Codex CLI。
 - **流式卡片**：文本回复和工具调用实时更新在同一张卡片上；卡片过长或更新失败时，会继续执行并在结束后用分段 markdown 补发完整输出。
+- **COT 过程消息**：可选先发一条过程消息展示 agent 的阶段性文本和工具调用，再单独发送最终答案。
 - **会话延续**：每个聊天、话题或文档评论有自己的会话，不会互相串。
 - **排队与消息合并**：短时间连续发送的消息会合并处理；任务运行中收到的普通消息会排队到下一轮，`/new`、`/cd`、`/ws use`、`/stop` 这类命令可以中断当前任务。
 - **多工作空间**：用 `/cd` 切换当前项目，用 `/ws` 保存和复用常用项目目录。
@@ -165,9 +166,9 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 
 私聊不需要 @。群和话题群默认必须 `@bot`；`@all` 会被忽略。支持的云文档评论里 @bot 就会触发回复。
 
-### 本地 Claude 控制
+### 本地 agent 控制
 
-这个分支保留 upstream 0.2.2 的 profile/Codex 架构，同时加回几个适合个人飞书 bridge 的本地定制：
+这个分支同步到 upstream 0.6.1，包含本地 Web 控制台、supervisor、个人版/团队版、按群设置 @ 规则以及 COT 过程消息，同时保留以下适合 Charles 工作流的本地定制：
 
 - `/effort low|medium|high|xhigh|max|ultracode`：修改当前 chat/topic 后续 Claude Code run 的 reasoning 档位。`ultracode` 会传成 `--effort xhigh`，同时打开 Claude Code session 的 dynamic workflows。`/effort default` 清除当前会话覆盖，回到 `/config` 里的全局默认。
 - `/model best|opus|opus5|sonnet|sonnet5|haiku|fable|fable5|default|<model-id>`：修改当前 chat/topic 后续 Claude Code run 的 `--model`，不会影响其它群。Bridge 保留 Claude Code 原生别名，同时把 `opus5`、`sonnet5`、`fable5` 分别固定映射为 `claude-opus-5`、`claude-sonnet-5`、`claude-fable-5`。这三款 5 系模型都原生支持 1M context；无代号别名会跟随 Claude Code 的最新模型，带代号写法则固定当前 generation。`default` 清除当前会话覆盖，回到 `/config` 里的全局默认。
@@ -179,6 +180,16 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 - PAC/代理分流：macOS launchd 不会继承 Terminal 的代理环境。`start` 和 `restart` 会把当前 shell 的 `http_proxy` / `https_proxy` / `all_proxy` 以及 `NO_PROXY` / `no_proxy` 写入 LaunchAgent，供 Claude/Codex 子进程使用。Feishu/Lark channel 本身会忽略这些代理变量并直连，避免某些代理栈不可靠尊重 `NO_PROXY` 时出现长连接 ping 超时。修改 PAC/全局/代理设置后，需从带有目标 agent 代理环境的 shell 里执行 `./bin/lark-channel-bridge.mjs restart --profile <name>`。
 
 本机 Claude profile 的全局默认是 `claude-opus-5 + high`。Anthropic 把 Opus 5 作为复杂 agentic coding 和企业工作的起点，Fable 5 仍是最高能力档。健身记录、日常闲聊、起名发散可用 `low` 或 `medium`；代码和多步 agentic 工作建议从 `xhigh` 开始；只有最难的长程任务才用 `max` 或 `ultracode`。已有 chat 的 model / effort 覆盖优先于全局默认，不会被全局设置误改。
+
+## 回复展示与 COT
+
+`/config` 可以调整三类展示选项：
+
+- **消息回复方式**：`消息卡片` 流式更新最终回复；`纯文本` 在 run 完成后一次性发送。
+- **工具调用显示**：控制最终回复卡片 / markdown 中是否展示工具块。
+- **COT 过程消息**：`关闭` 只发送最终回复；`简略` 先用 COT 消息展示 agent 的过程文本和工具摘要；`详细` 还会展示工具参数和截断后的输出。
+
+开启 COT 后，bridge 会把过程消息和最终答案拆成两条消息。过程消息用于追踪 agent 做了什么；最终答案仍由 agent 原始文本生成，bridge 不做启发式过滤。若 agent 把最终答案也作为普通流式文本输出，COT 过程消息中可能会出现对应片段。
 
 ## lark-cli 身份策略
 
