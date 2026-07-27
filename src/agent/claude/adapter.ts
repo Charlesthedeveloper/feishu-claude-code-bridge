@@ -359,6 +359,7 @@ function isZeroTokenSuccessfulResult(raw: unknown): boolean {
   const event = raw as {
     type?: unknown;
     is_error?: unknown;
+    subtype?: unknown;
     total_cost_usd?: unknown;
     usage?: {
       input_tokens?: unknown;
@@ -367,7 +368,11 @@ function isZeroTokenSuccessfulResult(raw: unknown): boolean {
       cache_creation_input_tokens?: unknown;
     };
   };
-  if (event.type !== 'result' || event.is_error === true || !event.usage) return false;
+  const failedSubtype =
+    typeof event.subtype === 'string' && /^error(?:_|$)/i.test(event.subtype);
+  if (event.type !== 'result' || event.is_error === true || failedSubtype || !event.usage) {
+    return false;
+  }
   const values = [
     event.usage.input_tokens,
     event.usage.output_tokens,

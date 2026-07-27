@@ -17,6 +17,8 @@ interface ClaudeRawEvent {
   subtype?: string;
   session_id?: string;
   cwd?: string;
+  is_error?: boolean;
+  result?: unknown;
   model?: string;
   message?: { content?: ContentBlock[] };
   usage?: {
@@ -80,6 +82,19 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
         costUsd: evt.total_cost_usd,
       };
     }
-    yield { type: 'done', sessionId: evt.session_id, terminationReason: 'normal' };
+    const failed =
+      evt.is_error === true ||
+      (typeof evt.subtype === 'string' && /^error(?:_|$)/i.test(evt.subtype));
+    if (failed) {
+      const result = typeof evt.result === 'string' ? evt.result.trim() : '';
+      const detail = result || evt.subtype || 'Claude execution failed';
+      yield {
+        type: 'error',
+        message: detail,
+        terminationReason: 'failed',
+      };
+    } else {
+      yield { type: 'done', sessionId: evt.session_id, terminationReason: 'normal' };
+    }
   }
 }

@@ -83,6 +83,35 @@ describe('Claude stream-json translator', () => {
     expect([...translateEvent({ type: 'result', session_id: 'sess-2' })][0]).not.toHaveProperty('threadId');
   });
 
+  it('translates a failed result as a terminal error after usage', () => {
+    expect([
+      ...translateEvent({
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        result:
+          'API Error: Connection closed mid-response. The response above may be incomplete.',
+        session_id: 'sess-3',
+        usage: { input_tokens: 12, output_tokens: 3, cache_read_input_tokens: 28 },
+        total_cost_usd: 0.2,
+      }),
+    ]).toEqual([
+      {
+        type: 'usage',
+        inputTokens: 12,
+        outputTokens: 3,
+        cachedInputTokens: 28,
+        costUsd: 0.2,
+      },
+      {
+        type: 'error',
+        message:
+          'API Error: Connection closed mid-response. The response above may be incomplete.',
+        terminationReason: 'failed',
+      },
+    ]);
+  });
+
   it('ignores unknown, empty, and incomplete raw events', () => {
     expect([...translateEvent(null)]).toEqual([]);
     expect([...translateEvent({ type: 'assistant', message: { content: [{ type: 'text', text: '' }] } })]).toEqual([]);

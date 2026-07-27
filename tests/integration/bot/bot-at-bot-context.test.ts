@@ -86,7 +86,12 @@ describe('bot identity injection into the agent adapter', () => {
     await startTestBridge(h);
 
     expect(sdkMock.createLarkChannel).toHaveBeenCalledWith(
-      expect.objectContaining({ respectProxyEnv: false }),
+      expect.objectContaining({
+        respectProxyEnv: false,
+        wsConfig: {
+          pingTimeout: 15,
+        },
+      }),
     );
   });
 });
